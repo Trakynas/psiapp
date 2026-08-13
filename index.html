@@ -125,6 +125,7 @@
                 <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
                     <span id="status-google-agenda" style="font-size: 0.8em; color: var(--texto-secundario);">⚪ Google Agenda desconectada</span>
                     <button class="btn-secundario" onclick="conectarGoogleAgenda()">🔗 Conectar Google Agenda</button>
+                    <button class="btn-secundario" onclick="abrirModalCalendarios()">📋 Escolher Agendas</button>
                     <button class="btn-primario" onclick="abrirModalNovoAgendamento()">+ Novo Agendamento</button>
                 </div>
             </div>
@@ -417,6 +418,24 @@
             
             <div id="lista-prontuarios-container" style="max-height: 40vh; overflow-y: auto; padding-right: 10px;">
                 </div>
+        </div>
+    </div>
+
+    <!-- MODAL ESCOLHER AGENDAS DO GOOGLE -->
+    <div id="modal-calendarios-google" class="modal-overlay">
+        <div class="modal-container" style="max-width: 450px;">
+            <div class="modal-header">
+                <h2>📋 Escolher Agendas</h2>
+                <button class="btn-fechar" onclick="fecharModalCalendarios()">✕</button>
+            </div>
+            <p style="color: var(--texto-secundario); font-size: 0.85em; margin-bottom: 15px;">
+                Marque quais agendas do Google você quer ver junto com os agendamentos do PsiApp.
+            </p>
+            <div id="lista-calendarios-google"></div>
+            <div class="modal-footer">
+                <button type="button" class="btn-secundario" onclick="fecharModalCalendarios()">Cancelar</button>
+                <button type="button" class="btn-primario" onclick="salvarCalendariosSelecionados()">Salvar</button>
+            </div>
         </div>
     </div>
 

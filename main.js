@@ -178,8 +178,8 @@ async function iniciarApp() {
 // 📅 GOOGLE AGENDA (Google Calendar API)
 // ==========================================
 // ⚠️ Troque pelo Client ID gerado no Google Cloud Console (termina em .apps.googleusercontent.com)
-const GOOGLE_CLIENT_ID = '703690616893-ppk0n9r67h8q1ugl9f2scevqgj9ejp2c.apps.googleusercontent.com';
-const GOOGLE_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
+const GOOGLE_CLIENT_ID = 'COLOQUE_AQUI_SEU_CLIENT_ID.apps.googleusercontent.com';
+const GOOGLE_SCOPE = 'https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.readonly';
 
 let googleTokenClient = null;
 let googleAccessToken = null;
@@ -216,9 +216,9 @@ function atualizarStatusGoogle() {
     if (el) el.innerText = googleAccessToken ? '🟢 Google Agenda conectada' : '⚪ Google Agenda desconectada';
 }
 
-async function chamarGoogleCalendar(method, path, body = null) {
+async function chamarGoogleCalendar(method, path, body = null, calendarId = 'primary') {
     if (!googleAccessToken) throw new Error('Google Agenda não conectada');
-    const resp = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/${path}`, {
+    const resp = await fetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/${path}`, {
         method,
         headers: { 'Authorization': `Bearer ${googleAccessToken}`, 'Content-Type': 'application/json' },
         body: body ? JSON.stringify(body) : null
@@ -268,28 +268,94 @@ async function excluirEventoGoogle(item) {
     }
 }
 
-// Busca os compromissos que já existem na Google Agenda dela (pessoais, de outros apps, etc.)
-// e mostra junto no calendário, em cinza, só pra visualização (não editável por aqui).
+// Busca a lista de todas as agendas (calendários) que a conta tem acesso
+async function buscarListaDeCalendarios() {
+    const resp = await fetch('https://www.googleapis.com/calendar/v3/users/me/calendarList', {
+        headers: { 'Authorization': `Bearer ${googleAccessToken}` }
+    });
+    if (!resp.ok) throw new Error('Não foi possível buscar a lista de agendas.');
+    const data = await resp.json();
+    return data.items || [];
+}
+
+function obterCalendariosSelecionados() {
+    try {
+        const salvo = JSON.parse(localStorage.getItem('psiapp_calendarios_selecionados'));
+        return Array.isArray(salvo) && salvo.length ? salvo : ['primary'];
+    } catch { return ['primary']; }
+}
+
+window.abrirModalCalendarios = async function() {
+    if (!googleAccessToken) { alert('Conecte o Google Agenda primeiro.'); return; }
+    const container = document.getElementById('lista-calendarios-google');
+    container.innerHTML = '<p style="color: var(--texto-secundario);">Carregando suas agendas...</p>';
+    document.getElementById('modal-calendarios-google').style.display = 'flex';
+    try {
+        const calendarios = await buscarListaDeCalendarios();
+        const selecionados = new Set(obterCalendariosSelecionados());
+        container.innerHTML = '';
+        calendarios.forEach(cal => {
+            const linha = document.createElement('label');
+            linha.style.cssText = 'display:flex; align-items:center; gap:10px; padding:10px 12px; border-radius:10px; margin-bottom:6px; background:rgba(124,58,237,0.04); cursor:pointer;';
+            linha.innerHTML = `
+                <input type="checkbox" value="${cal.id}" ${selecionados.has(cal.id) ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--roxo-vibrante);">
+                <span style="width:12px;height:12px;border-radius:50%;background:${cal.backgroundColor || '#7C3AED'}; flex-shrink:0;"></span>
+                <span style="font-size:0.9em;">${cal.summary}${cal.primary ? ' (principal)' : ''}</span>
+            `;
+            container.appendChild(linha);
+        });
+    } catch (err) {
+        container.innerHTML = `<p style="color: var(--texto-alerta);">${err.message}</p>`;
+    }
+}
+
+window.fecharModalCalendarios = function() { document.getElementById('modal-calendarios-google').style.display = 'none'; }
+
+window.salvarCalendariosSelecionados = function() {
+    const marcados = Array.from(document.querySelectorAll('#lista-calendarios-google input[type="checkbox"]:checked')).map(c => c.value);
+    localStorage.setItem('psiapp_calendarios_selecionados', JSON.stringify(marcados.length ? marcados : ['primary']));
+    window.fecharModalCalendarios();
+    window.sincronizarComGoogleAgenda();
+}
+
+// Cores com bom contraste pra distinguir cada agenda no calendário (texto branco em cima)
+const PALETA_AGENDAS_EXTERNAS = ['#475569', '#7C3AED', '#0E7490', '#B45309', '#4D7C0F', '#9D174D'];
+
+// Busca os compromissos que já existem nas agendas selecionadas do Google
+// e mostra junto no calendário, só pra visualização (não editável por aqui).
 window.sincronizarComGoogleAgenda = async function() {
     if (!googleAccessToken) return;
     try {
         const agora = new Date();
         const timeMin = new Date(agora.getFullYear(), agora.getMonth() - 1, 1).toISOString();
         const timeMax = new Date(agora.getFullYear(), agora.getMonth() + 3, 1).toISOString();
-        const data = await chamarGoogleCalendar('GET', `events?timeMin=${timeMin}&timeMax=${timeMax}&singleEvents=true&maxResults=250`);
         const idsDoApp = new Set(listaAgendaGlobal.map(a => a.google_event_id).filter(Boolean));
-        window.eventosGoogleCache = (data.items || [])
-            .filter(ev => !idsDoApp.has(ev.id) && ev.start)
-            .map(ev => ({
-                id: 'google-' + ev.id,
-                title: '🗓️ ' + (ev.summary || 'Compromisso'),
-                start: ev.start.dateTime || ev.start.date,
-                end: ev.end ? (ev.end.dateTime || ev.end.date) : undefined,
-                allDay: !ev.start.dateTime,
-                backgroundColor: '#9CA3AF',
-                borderColor: '#9CA3AF',
-                editable: false
-            }));
+        const calendariosSelecionados = obterCalendariosSelecionados();
+
+        const resultados = await Promise.all(calendariosSelecionados.map(async (calId, idx) => {
+            try {
+                const data = await chamarGoogleCalendar('GET', `events?timeMin=${timeMin}&timeMax=${timeMax}&singleEvents=true&maxResults=250`, null, calId);
+                const cor = PALETA_AGENDAS_EXTERNAS[idx % PALETA_AGENDAS_EXTERNAS.length];
+                return (data.items || [])
+                    .filter(ev => !idsDoApp.has(ev.id) && ev.start)
+                    .map(ev => ({
+                        id: 'google-' + calId + '-' + ev.id,
+                        title: '🗓️ ' + (ev.summary || 'Compromisso'),
+                        start: ev.start.dateTime || ev.start.date,
+                        end: ev.end ? (ev.end.dateTime || ev.end.date) : undefined,
+                        allDay: !ev.start.dateTime,
+                        backgroundColor: cor,
+                        borderColor: cor,
+                        textColor: '#ffffff',
+                        editable: false
+                    }));
+            } catch (err) {
+                console.error(`Erro ao buscar agenda ${calId}:`, err);
+                return [];
+            }
+        }));
+
+        window.eventosGoogleCache = resultados.flat();
         window.atualizarCalendarioNaTela();
     } catch (err) {
         console.error('Erro ao buscar Google Agenda:', err);
