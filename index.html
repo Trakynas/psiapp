@@ -13,6 +13,9 @@
     <!-- FULLCALENDAR -->
     <script src='https://cdn.jsdelivr.net/npm/fullcalendar@6.1.8/index.global.min.js'></script>
 
+    <!-- GOOGLE IDENTITY SERVICES (login/autorização do Google Agenda) -->
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+
     <!-- CSS -->
     <link rel="stylesheet" href="/style.css">
 </head>
@@ -119,7 +122,11 @@
                     <h1>Agenda Clínica 🗓️</h1>
                     <p>Arraste os agendamentos para a lixeira para excluir</p>
                 </div>
-                <button class="btn-primario" onclick="abrirModalNovoAgendamento()">+ Novo Agendamento</button>
+                <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                    <span id="status-google-agenda" style="font-size: 0.8em; color: var(--texto-secundario);">⚪ Google Agenda desconectada</span>
+                    <button class="btn-secundario" onclick="conectarGoogleAgenda()">🔗 Conectar Google Agenda</button>
+                    <button class="btn-primario" onclick="abrirModalNovoAgendamento()">+ Novo Agendamento</button>
+                </div>
             </div>
             
             <div class="calendario-wrapper">

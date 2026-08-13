@@ -57,7 +57,8 @@ async function salvarBD() {
         if (listaAgendaGlobal.length) {
             const { error } = await supabase.from('agenda').insert(listaAgendaGlobal.map(a => ({
                 id: a.id, user_id: uid, tipo: a.tipo, descricao: a.descricao || '',
-                whatsapp: a.whatsapp || null, data: a.data, horario: a.horario, duracao: a.duracao || 60
+                whatsapp: a.whatsapp || null, data: a.data, horario: a.horario, duracao: a.duracao || 60,
+                google_event_id: a.google_event_id || null
             })));
             if (error) throw error;
         }
@@ -116,7 +117,8 @@ async function carregarTudoDoSupabase() {
 
     listaAgendaGlobal = (agRes.data || []).map(a => ({
         id: a.id, tipo: a.tipo, descricao: a.descricao, whatsapp: a.whatsapp, data: a.data,
-        horario: a.horario ? a.horario.slice(0, 5) : a.horario, duracao: a.duracao
+        horario: a.horario ? a.horario.slice(0, 5) : a.horario, duracao: a.duracao,
+        google_event_id: a.google_event_id
     }));
 
     listaTransacoesGlobais = (finRes.data || []).map(t => ({
@@ -168,6 +170,130 @@ async function iniciarApp() {
     window.baixarListaDePacientesEmBackground();
     window.carregarTarefas();
     window.carregarFinanceiro();
+    aguardarGoogleIdentity(inicializarGoogleAuth);
+    atualizarStatusGoogle();
+}
+
+// ==========================================
+// 📅 GOOGLE AGENDA (Google Calendar API)
+// ==========================================
+// ⚠️ Troque pelo Client ID gerado no Google Cloud Console (termina em .apps.googleusercontent.com)
+const GOOGLE_CLIENT_ID = '703690616893-ppk0n9r67h8q1ugl9f2scevqgj9ejp2c.apps.googleusercontent.com';
+const GOOGLE_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
+
+let googleTokenClient = null;
+let googleAccessToken = null;
+window.eventosGoogleCache = [];
+
+function aguardarGoogleIdentity(callback, tentativas = 0) {
+    if (window.google && window.google.accounts && window.google.accounts.oauth2) {
+        callback();
+    } else if (tentativas < 40) {
+        setTimeout(() => aguardarGoogleIdentity(callback, tentativas + 1), 250);
+    }
+}
+
+function inicializarGoogleAuth() {
+    googleTokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: GOOGLE_CLIENT_ID,
+        scope: GOOGLE_SCOPE,
+        callback: (resp) => {
+            if (resp.error) { console.error('Erro Google Auth:', resp); return; }
+            googleAccessToken = resp.access_token;
+            atualizarStatusGoogle();
+            window.sincronizarComGoogleAgenda();
+        }
+    });
+}
+
+window.conectarGoogleAgenda = function() {
+    if (!googleTokenClient) { alert('A biblioteca do Google ainda está carregando, aguarde alguns segundos e tente de novo.'); return; }
+    googleTokenClient.requestAccessToken({ prompt: googleAccessToken ? '' : 'consent' });
+}
+
+function atualizarStatusGoogle() {
+    const el = document.getElementById('status-google-agenda');
+    if (el) el.innerText = googleAccessToken ? '🟢 Google Agenda conectada' : '⚪ Google Agenda desconectada';
+}
+
+async function chamarGoogleCalendar(method, path, body = null) {
+    if (!googleAccessToken) throw new Error('Google Agenda não conectada');
+    const resp = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/${path}`, {
+        method,
+        headers: { 'Authorization': `Bearer ${googleAccessToken}`, 'Content-Type': 'application/json' },
+        body: body ? JSON.stringify(body) : null
+    });
+    if (!resp.ok) {
+        const errData = await resp.json().catch(() => ({}));
+        throw new Error(errData.error?.message || `Erro Google Calendar (${resp.status})`);
+    }
+    if (resp.status === 204) return null;
+    return resp.json();
+}
+
+// Cria ou atualiza (se já existir) o evento correspondente no Google Agenda
+async function sincronizarEventoUnico(item) {
+    if (!googleAccessToken || !item) return;
+    const duracaoMinutos = item.duracao ? parseInt(item.duracao) : 60;
+    const horario = item.horario || '09:00';
+    const [h, m] = horario.split(':').map(Number);
+    let totalMin = h * 60 + m + duracaoMinutos;
+    const hf = String(Math.floor(totalMin / 60) % 24).padStart(2, '0');
+    const mf = String(totalMin % 60).padStart(2, '0');
+
+    const body = {
+        summary: (item.tipo === 'pessoal' ? '📌 ' : '👤 ') + item.descricao,
+        start: { dateTime: `${item.data}T${horario}:00`, timeZone: 'America/Sao_Paulo' },
+        end: { dateTime: `${item.data}T${hf}:${mf}:00`, timeZone: 'America/Sao_Paulo' }
+    };
+
+    try {
+        if (item.google_event_id) {
+            await chamarGoogleCalendar('PATCH', `events/${item.google_event_id}`, body);
+        } else {
+            const criado = await chamarGoogleCalendar('POST', 'events', body);
+            item.google_event_id = criado.id;
+        }
+    } catch (err) {
+        console.error('Erro ao sincronizar com Google Agenda:', err);
+    }
+}
+
+async function excluirEventoGoogle(item) {
+    if (!googleAccessToken || !item || !item.google_event_id) return;
+    try {
+        await chamarGoogleCalendar('DELETE', `events/${item.google_event_id}`);
+    } catch (err) {
+        console.error('Erro ao excluir do Google Agenda:', err);
+    }
+}
+
+// Busca os compromissos que já existem na Google Agenda dela (pessoais, de outros apps, etc.)
+// e mostra junto no calendário, em cinza, só pra visualização (não editável por aqui).
+window.sincronizarComGoogleAgenda = async function() {
+    if (!googleAccessToken) return;
+    try {
+        const agora = new Date();
+        const timeMin = new Date(agora.getFullYear(), agora.getMonth() - 1, 1).toISOString();
+        const timeMax = new Date(agora.getFullYear(), agora.getMonth() + 3, 1).toISOString();
+        const data = await chamarGoogleCalendar('GET', `events?timeMin=${timeMin}&timeMax=${timeMax}&singleEvents=true&maxResults=250`);
+        const idsDoApp = new Set(listaAgendaGlobal.map(a => a.google_event_id).filter(Boolean));
+        window.eventosGoogleCache = (data.items || [])
+            .filter(ev => !idsDoApp.has(ev.id) && ev.start)
+            .map(ev => ({
+                id: 'google-' + ev.id,
+                title: '🗓️ ' + (ev.summary || 'Compromisso'),
+                start: ev.start.dateTime || ev.start.date,
+                end: ev.end ? (ev.end.dateTime || ev.end.date) : undefined,
+                allDay: !ev.start.dateTime,
+                backgroundColor: '#9CA3AF',
+                borderColor: '#9CA3AF',
+                editable: false
+            }));
+        window.atualizarCalendarioNaTela();
+    } catch (err) {
+        console.error('Erro ao buscar Google Agenda:', err);
+    }
 }
 
 // Efeito de Confetes Festivos ao Salvar
@@ -221,7 +347,9 @@ window.inicializarCalendario = function() {
 
                 if (mouseX >= rect.left && mouseX <= rect.right && mouseY >= rect.top && mouseY <= rect.bottom) {
                     if (confirm(`Deseja eliminar o agendamento de "${info.event.title}"?`)) {
+                        const itemRemovido = listaAgendaGlobal.find(a => a.id === info.event.id);
                         listaAgendaGlobal = listaAgendaGlobal.filter(a => a.id !== info.event.id);
+                        excluirEventoGoogle(itemRemovido);
                         salvarBD();
                         window.atualizarCalendarioNaTela();
                     }
@@ -246,7 +374,7 @@ window.inicializarCalendario = function() {
                 if (index > -1) {
                     listaAgendaGlobal[index].data = novaDataStr;
                     listaAgendaGlobal[index].horario = novoHorarioStr; // Salva o novo horário também!
-                    salvarBD();
+                    sincronizarEventoUnico(listaAgendaGlobal[index]).then(salvarBD);
                     dispararConfetes();
                 }
             } else {
@@ -267,7 +395,7 @@ window.inicializarCalendario = function() {
                 let index = listaAgendaGlobal.findIndex(a => a.id === info.event.id);
                 if (index > -1) {
                     listaAgendaGlobal[index].duracao = novaDuracaoMinutos;
-                    salvarBD();
+                    sincronizarEventoUnico(listaAgendaGlobal[index]).then(salvarBD);
                     dispararConfetes();
                 }
             } else {
@@ -388,6 +516,7 @@ window.atualizarCalendarioNaTela = function() {
     if (calendarInstance) {
         calendarInstance.removeAllEvents();
         calendarInstance.addEventSource(window.obterEventosCalendario());
+        calendarInstance.addEventSource(window.eventosGoogleCache || []);
         calendarInstance.render();
     }
 }
@@ -498,8 +627,10 @@ window.fecharModalAgendamento = function() { document.getElementById('modal-agen
 window.deletarAgendamentoDoModal = function() {
     const id = document.getElementById('agenda-id').value;
     if (id && confirm("Tem certeza que deseja excluir este agendamento?")) {
+        const itemRemovido = listaAgendaGlobal.find(a => a.id === id);
         listaAgendaGlobal = listaAgendaGlobal.filter(a => a.id !== id);
-        salvarBD(); window.atualizarCalendarioNaTela(); window.fecharModalAgendamento();
+        excluirEventoGoogle(itemRemovido).then(salvarBD);
+        window.atualizarCalendarioNaTela(); window.fecharModalAgendamento();
     }
 }
 window.mudarTipoAgendamento = function(tipo) {
@@ -568,7 +699,7 @@ window.atualizarTextoContadorPacote = function() {
     document.getElementById('badge-contador-pacote').innerText = `Sessão ${document.getElementById('input-sessao-atual').value || 1}/${document.getElementById('input-total-pacote').value || 4}`;
 }
 
-window.salvarAgendamento = function(e) {
+window.salvarAgendamento = async function(e) {
     e.preventDefault();
     const agendaIdInput = document.getElementById('agenda-id').value;
     const tipo = document.getElementById('agenda-tipo-oculto').value;
@@ -600,6 +731,7 @@ window.salvarAgendamento = function(e) {
 
     let [ano, mes, dia] = dataInicialStr.split('-').map(Number);
     let dataBase = new Date(ano, mes - 1, dia);
+    let itensNovos = [];
 
     if (agendaIdInput && !rec) {
         let index = listaAgendaGlobal.findIndex(a => a.id === agendaIdInput);
@@ -625,7 +757,8 @@ window.salvarAgendamento = function(e) {
                 listaAgendaGlobal[index].horario = horario;
                 listaAgendaGlobal[index].duracao = duracao; // <- Salva a duração na Edição
             }
-            salvarBD(); dispararConfetes(); window.fecharModalAgendamento(); window.atualizarCalendarioNaTela(); return;
+            await sincronizarEventoUnico(listaAgendaGlobal[index]);
+            await salvarBD(); dispararConfetes(); window.fecharModalAgendamento(); window.atualizarCalendarioNaTela(); return;
         }
     }
 
@@ -633,12 +766,13 @@ window.salvarAgendamento = function(e) {
         const desc = document.getElementById('input-compromisso-pessoal').value;
         if (rec) {
             for (let i = 0; i < 12; i++) {
-                // -> duracao: duracao incluído nos pushs abaixo!
-                listaAgendaGlobal.push({ id: crypto.randomUUID(), tipo: 'pessoal', descricao: desc, data: dataBase.toISOString().split('T')[0], horario: horario, duracao: duracao });
+                let novo = { id: crypto.randomUUID(), tipo: 'pessoal', descricao: desc, data: dataBase.toISOString().split('T')[0], horario: horario, duracao: duracao };
+                listaAgendaGlobal.push(novo); itensNovos.push(novo);
                 dataBase.setDate(dataBase.getDate() + 7);
             }
         } else {
-            listaAgendaGlobal.push({ id: crypto.randomUUID(), tipo: 'pessoal', descricao: desc, data: dataInicialStr, horario: horario, duracao: duracao });
+            let novo = { id: crypto.randomUUID(), tipo: 'pessoal', descricao: desc, data: dataInicialStr, horario: horario, duracao: duracao };
+            listaAgendaGlobal.push(novo); itensNovos.push(novo);
         }
     } else {
         const pacNome = document.getElementById('select-paciente-agenda').value;
@@ -647,26 +781,31 @@ window.salvarAgendamento = function(e) {
         if (document.getElementById('select-tipo-sessao').value === 'avulsa') {
             if (rec) {
                 for (let i = 0; i < 12; i++) {
-                    listaAgendaGlobal.push({ id: crypto.randomUUID(), tipo: 'paciente', descricao: pacNome, whatsapp: wapp, data: dataBase.toISOString().split('T')[0], horario: horario, duracao: duracao });
+                    let novo = { id: crypto.randomUUID(), tipo: 'paciente', descricao: pacNome, whatsapp: wapp, data: dataBase.toISOString().split('T')[0], horario: horario, duracao: duracao };
+                    listaAgendaGlobal.push(novo); itensNovos.push(novo);
                     dataBase.setDate(dataBase.getDate() + 7);
                 }
             } else {
-                listaAgendaGlobal.push({ id: crypto.randomUUID(), tipo: 'paciente', descricao: pacNome, whatsapp: wapp, data: dataInicialStr, horario: horario, duracao: duracao });
+                let novo = { id: crypto.randomUUID(), tipo: 'paciente', descricao: pacNome, whatsapp: wapp, data: dataInicialStr, horario: horario, duracao: duracao };
+                listaAgendaGlobal.push(novo); itensNovos.push(novo);
             }
         } else {
             let sAtual = parseInt(document.getElementById('input-sessao-atual').value) || 1;
             let total = parseInt(document.getElementById('input-total-pacote').value) || 4;
             if (rec) {
                 for (let i = sAtual; i <= total; i++) {
-                    listaAgendaGlobal.push({ id: crypto.randomUUID(), tipo: 'paciente', descricao: `${pacNome} (${i}/${total})`, whatsapp: wapp, data: dataBase.toISOString().split('T')[0], horario: horario, duracao: duracao });
+                    let novo = { id: crypto.randomUUID(), tipo: 'paciente', descricao: `${pacNome} (${i}/${total})`, whatsapp: wapp, data: dataBase.toISOString().split('T')[0], horario: horario, duracao: duracao };
+                    listaAgendaGlobal.push(novo); itensNovos.push(novo);
                     dataBase.setDate(dataBase.getDate() + 7);
                 }
             } else {
-                listaAgendaGlobal.push({ id: crypto.randomUUID(), tipo: 'paciente', descricao: `${pacNome} (${sAtual}/${total})`, whatsapp: wapp, data: dataInicialStr, horario: horario, duracao: duracao });
+                let novo = { id: crypto.randomUUID(), tipo: 'paciente', descricao: `${pacNome} (${sAtual}/${total})`, whatsapp: wapp, data: dataInicialStr, horario: horario, duracao: duracao };
+                listaAgendaGlobal.push(novo); itensNovos.push(novo);
             }
         }
     }
-    salvarBD(); dispararConfetes(); window.fecharModalAgendamento(); window.atualizarCalendarioNaTela();
+    await Promise.all(itensNovos.map(sincronizarEventoUnico));
+    await salvarBD(); dispararConfetes(); window.fecharModalAgendamento(); window.atualizarCalendarioNaTela();
 }
 
 // ==========================================
