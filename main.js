@@ -178,7 +178,7 @@ async function iniciarApp() {
 // 📅 GOOGLE AGENDA (Google Calendar API)
 // ==========================================
 // ⚠️ Troque pelo Client ID gerado no Google Cloud Console (termina em .apps.googleusercontent.com)
-const GOOGLE_CLIENT_ID = 'COLOQUE_AQUI_SEU_CLIENT_ID.apps.googleusercontent.com';
+const GOOGLE_CLIENT_ID = '703690616893-ppk0n9r67h8q1ugl9f2scevqgj9ejp2c.apps.googleusercontent.com';
 const GOOGLE_SCOPE = 'https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.readonly';
 
 let googleTokenClient = null;
