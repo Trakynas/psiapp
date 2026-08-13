@@ -158,6 +158,9 @@ window.fazerLogout = async function() {
     if (!confirm('Deseja realmente sair?')) return;
     await supabase.auth.signOut();
     currentUser = null;
+    googleAccessToken = null;
+    sessionStorage.removeItem('psiapp_google_token');
+    atualizarStatusGoogle();
     document.getElementById('app-shell').style.display = 'none';
     document.getElementById('tela-login').style.display = 'flex';
 }
@@ -193,6 +196,22 @@ function aguardarGoogleIdentity(callback, tentativas = 0) {
     }
 }
 
+function salvarTokenNaSessao(resp) {
+    const expiraEm = Date.now() + (resp.expires_in * 1000);
+    sessionStorage.setItem('psiapp_google_token', JSON.stringify({ access_token: resp.access_token, expira_em: expiraEm }));
+}
+
+function tentarRestaurarTokenDaSessao() {
+    try {
+        const salvo = JSON.parse(sessionStorage.getItem('psiapp_google_token'));
+        if (salvo && salvo.access_token && salvo.expira_em > Date.now()) {
+            googleAccessToken = salvo.access_token;
+            atualizarStatusGoogle();
+            window.sincronizarComGoogleAgenda();
+        }
+    } catch { /* nada salvo ainda, sem problema */ }
+}
+
 function inicializarGoogleAuth() {
     googleTokenClient = google.accounts.oauth2.initTokenClient({
         client_id: GOOGLE_CLIENT_ID,
@@ -200,9 +219,28 @@ function inicializarGoogleAuth() {
         callback: (resp) => {
             if (resp.error) { console.error('Erro Google Auth:', resp); return; }
             googleAccessToken = resp.access_token;
+            salvarTokenNaSessao(resp);
             atualizarStatusGoogle();
             window.sincronizarComGoogleAgenda();
         }
+    });
+    tentarRestaurarTokenDaSessao();
+}
+
+// Pede um token novo sem abrir popup nenhum (só funciona se ela ainda estiver logada no Google nesse navegador)
+function renovarTokenSilenciosamente() {
+    return new Promise((resolve) => {
+        if (!googleTokenClient) { resolve(false); return; }
+        const callbackOriginal = googleTokenClient.callback;
+        googleTokenClient.callback = (resp) => {
+            googleTokenClient.callback = callbackOriginal;
+            if (resp.error) { resolve(false); return; }
+            googleAccessToken = resp.access_token;
+            salvarTokenNaSessao(resp);
+            atualizarStatusGoogle();
+            resolve(true);
+        };
+        googleTokenClient.requestAccessToken({ prompt: '' });
     });
 }
 
@@ -216,13 +254,18 @@ function atualizarStatusGoogle() {
     if (el) el.innerText = googleAccessToken ? '🟢 Google Agenda conectada' : '⚪ Google Agenda desconectada';
 }
 
-async function chamarGoogleCalendar(method, path, body = null, calendarId = 'primary') {
+async function chamarGoogleCalendar(method, path, body = null, calendarId = 'primary', jaTentouRenovar = false) {
     if (!googleAccessToken) throw new Error('Google Agenda não conectada');
     const resp = await fetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/${path}`, {
         method,
         headers: { 'Authorization': `Bearer ${googleAccessToken}`, 'Content-Type': 'application/json' },
         body: body ? JSON.stringify(body) : null
     });
+    if (resp.status === 401 && !jaTentouRenovar) {
+        // Token expirou: tenta renovar em silêncio e refazer a chamada uma única vez
+        const renovou = await renovarTokenSilenciosamente();
+        if (renovou) return chamarGoogleCalendar(method, path, body, calendarId, true);
+    }
     if (!resp.ok) {
         const errData = await resp.json().catch(() => ({}));
         throw new Error(errData.error?.message || `Erro Google Calendar (${resp.status})`);
