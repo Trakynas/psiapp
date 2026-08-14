@@ -303,6 +303,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--roxo-vibrante) !
     .calendario-wrapper { max-height: 520px; }
     #calendar { height: 480px; }
 }
+
 /* ========================================= */
 /* ESTILOS DO PRONTUÁRIO ELETRÔNICO          */
 /* ========================================= */
@@ -357,7 +358,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--roxo-vibrante) !
     font-size: 0.95em;
     color: var(--texto-secundario);
     display: -webkit-box;
-    -webkit-line-clamp: 2; /* Mostra apenas as primeiras 2 linhas */
+    -webkit-line-clamp: 2; 
     line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
@@ -388,3 +389,45 @@ input:focus, select:focus, textarea:focus { border-color: var(--roxo-vibrante) !
 #lista-prontuarios-container::-webkit-scrollbar-track { background: rgba(0,0,0,0.02); border-radius: 10px; }
 #lista-prontuarios-container::-webkit-scrollbar-thumb { background: rgba(124, 58, 237, 0.3); border-radius: 10px; }
 #lista-prontuarios-container::-webkit-scrollbar-thumb:hover { background: rgba(124, 58, 237, 0.6); }
+
+/* ========================================= */
+/* AJUSTES PARA LEITURA NA VISÃO DE SEMANA   */
+/* ========================================= */
+
+/* Permite que o texto quebre a linha na visualização de Semana/Dia */
+.fc-timegrid-event .fc-event-title {
+    white-space: normal !important; 
+    word-wrap: break-word;
+    font-size: 0.85em !important; 
+    line-height: 1.1 !important;
+    margin-top: 1px;
+}
+
+/* Ajusta a caixinha interna e diminui o padding para dar mais espaço vertical */
+.fc-timegrid-event .fc-event-main {
+    padding: 2px 4px !important;
+    display: flex;
+    flex-direction: column;
+    overflow: visible !important; /* Permite que o texto escape um pouquinho se faltar espaço */
+}
+
+/* Deixa a hora menor para não roubar espaço do nome */
+.fc-timegrid-event .fc-event-time {
+    font-size: 0.75em !important;
+    font-weight: 500;
+    opacity: 0.85;
+    white-space: normal !important;
+    line-height: 1.1 !important;
+    margin-bottom: 2px;
+}
+
+/* Tira o corte de overflow da própria caixa do evento */
+.fc-timegrid-event {
+    overflow: visible !important;
+    z-index: 1; /* Garante que o texto que vazar não fique escondido atrás das linhas da grade */
+}
+
+/* Quando passar o mouse, ele vem pra frente pra facilitar a leitura caso sobreponha outro evento abaixo dele */
+.fc-timegrid-event:hover {
+    z-index: 5 !important; 
+}
