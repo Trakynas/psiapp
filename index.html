@@ -52,7 +52,9 @@
 
     <div class="sidebar">
         <div class="logo">🧠 PsiApp</div>
-        <div class="menu-item ativo" onclick="mudarTela('tela-agenda', this)">📅 Agenda Interativa</div>
+        <div class="menu-item ativo" onclick="mudarTela('tela-agenda-dia', this)">📋 Agenda</div>
+        <div class="menu-item" onclick="mudarTela('tela-agendamentos-lista', this)">🧾 Agendamentos</div>
+        <div class="menu-item" onclick="mudarTela('tela-agenda', this)">🗓️ Calendário</div>
         <div class="menu-item" onclick="tentarAcessarTela('tela-pacientes', this)">👥 Pacientes 🔒</div>
         <div class="menu-item" onclick="tentarAcessarTela('tela-financeiro', this)">💰 Financeiro 🔒</div>
         <div class="menu-item" onclick="mudarTela('tela-fuso-horario', this)">🌍 Fuso Horário</div>
@@ -115,23 +117,29 @@
     </div>
 </div>
         
-        <!-- TELA: AGENDA -->
-        <div id="tela-agenda" class="tela ativa">
+        <!-- TELA: AGENDA DO DIA (visão diária, mobile-friendly) -->
+        <div id="tela-agenda-dia" class="tela ativa">
             <div class="header">
                 <div>
-                    <h1>Agenda Clínica 🗓️</h1>
-                    <p>Arraste os agendamentos para a lixeira para excluir</p>
+                    <h1>Agenda 📋</h1>
+                    <p>Seus compromissos, um dia de cada vez</p>
                 </div>
                 <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
                     <span id="status-google-agenda" style="font-size: 0.8em; color: var(--texto-secundario);">⚪ Google Agenda desconectada</span>
-                    <button class="btn-secundario" onclick="conectarGoogleAgenda()">🔗 Conectar Google Agenda</button>
-                    <button class="btn-secundario" onclick="abrirModalCalendarios()">📋 Escolher Agendas</button>
-                    <button class="btn-primario" onclick="abrirModalNovoAgendamento()">+ Novo Agendamento</button>
+                    <span id="aviso-google-expirando" style="display:none; font-size: 0.8em; color: var(--texto-alerta); background: var(--status-alerta); padding: 4px 10px; border-radius: 12px; font-weight: 600;"></span>
                 </div>
             </div>
-            
-            <div class="calendario-wrapper">
-                <div id="calendar"></div>
+
+            <div class="calendario-wrapper" style="padding: 20px;">
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; gap: 10px; flex-wrap: wrap;">
+                    <button class="btn-icone" onclick="navegarDiaAgenda(-1)">← Anterior</button>
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <h3 id="agenda-dia-titulo" style="margin: 0; color: var(--texto-berinjela); text-transform: capitalize;">Hoje</h3>
+                        <button class="btn-secundario" style="padding: 5px 14px; font-size: 0.8em;" onclick="irParaHoje()">Hoje</button>
+                    </div>
+                    <button class="btn-icone" onclick="navegarDiaAgenda(1)">Próximo →</button>
+                </div>
+                <div id="lista-agenda-dia-container"></div>
             </div>
 
             <div class="secao-tarefas">
@@ -147,6 +155,37 @@
                 <div class="lista-tarefas" id="lista-tarefas-container">
                     <p style="color: var(--texto-secundario);">Nenhuma tarefa pendente.</p>
                 </div>
+            </div>
+        </div>
+
+        <!-- TELA: LISTA DE AGENDAMENTOS -->
+        <div id="tela-agendamentos-lista" class="tela">
+            <div class="header">
+                <div>
+                    <h1>Agendamentos 🧾</h1>
+                    <p>Todos os seus compromissos, em lista</p>
+                </div>
+                <button class="btn-primario" onclick="abrirModalNovoAgendamento()">+ Novo Agendamento</button>
+            </div>
+            <div id="lista-agendamentos-completa"></div>
+        </div>
+
+        <!-- TELA: AGENDA (CALENDÁRIO INTERATIVO) -->
+        <div id="tela-agenda" class="tela">
+            <div class="header">
+                <div>
+                    <h1>Calendário 🗓️</h1>
+                    <p>Arraste os agendamentos para a lixeira para excluir</p>
+                </div>
+                <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                    <button class="btn-secundario" onclick="conectarGoogleAgenda()">🔗 Conectar Google Agenda</button>
+                    <button class="btn-secundario" onclick="abrirModalCalendarios()">📋 Escolher Agendas</button>
+                    <button class="btn-primario" onclick="abrirModalNovoAgendamento()">+ Novo Agendamento</button>
+                </div>
+            </div>
+            
+            <div class="calendario-wrapper">
+                <div id="calendar"></div>
             </div>
         </div>
 

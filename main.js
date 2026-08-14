@@ -153,7 +153,7 @@ window.fazerLogout = async function() {
     await supabase.auth.signOut();
     currentUser = null;
     googleAccessToken = null;
-    sessionStorage.removeItem('psiapp_google_token');
+    googleTokenSalvoEm = null;
     atualizarStatusGoogle();
     document.getElementById('app-shell').style.display = 'none';
     document.getElementById('tela-login').style.display = 'flex';
@@ -167,6 +167,7 @@ async function iniciarApp() {
     window.baixarListaDePacientesEmBackground();
     window.carregarTarefas();
     window.carregarFinanceiro();
+    window.renderizarAgendaDoDia();
     aguardarGoogleIdentity(inicializarGoogleAuth);
     atualizarStatusGoogle();
 }
@@ -177,8 +178,9 @@ async function iniciarApp() {
 const GOOGLE_CLIENT_ID = '703690616893-ppk0n9r67h8q1ugl9f2scevqgj9ejp2c.apps.googleusercontent.com';
 const GOOGLE_SCOPE = 'https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.readonly';
 
-let googleTokenClient = null;
+let googleCodeClient = null;
 let googleAccessToken = null;
+let googleTokenSalvoEm = null; // data em que o refresh_token foi salvo no servidor
 window.eventosGoogleCache = [];
 
 function aguardarGoogleIdentity(callback, tentativas = 0) {
@@ -189,61 +191,99 @@ function aguardarGoogleIdentity(callback, tentativas = 0) {
     }
 }
 
-function salvarTokenNaSessao(resp) {
-    const expiraEm = Date.now() + (resp.expires_in * 1000);
-    sessionStorage.setItem('psiapp_google_token', JSON.stringify({ access_token: resp.access_token, expira_em: expiraEm }));
-}
-
-function tentarRestaurarTokenDaSessao() {
-    try {
-        const salvo = JSON.parse(sessionStorage.getItem('psiapp_google_token'));
-        if (salvo && salvo.access_token && salvo.expira_em > Date.now()) {
-            googleAccessToken = salvo.access_token;
-            atualizarStatusGoogle();
-            window.sincronizarComGoogleAgenda();
-        }
-    } catch { /* nada salvo ainda, sem problema */ }
+async function obterSupabaseAccessToken() {
+    const { data } = await supabase.auth.getSession();
+    return data.session ? data.session.access_token : null;
 }
 
 function inicializarGoogleAuth() {
-    googleTokenClient = google.accounts.oauth2.initTokenClient({
+    googleCodeClient = google.accounts.oauth2.initCodeClient({
         client_id: GOOGLE_CLIENT_ID,
         scope: GOOGLE_SCOPE,
-        callback: (resp) => {
-            if (resp.error) { console.error('Erro Google Auth:', resp); return; }
-            googleAccessToken = resp.access_token;
-            salvarTokenNaSessao(resp);
-            atualizarStatusGoogle();
-            window.sincronizarComGoogleAgenda();
+        ux_mode: 'popup',
+        access_type: 'offline',
+        prompt: 'consent',
+        callback: async (resp) => {
+            if (resp.error || !resp.code) { console.error('Erro Google Auth:', resp); return; }
+            await trocarCodigoPorToken(resp.code);
         }
     });
-    tentarRestaurarTokenDaSessao();
+    // Ao abrir o app, tenta renovar em silêncio usando o que já está salvo no servidor (sem pedir clique)
+    renovarTokenPeloServidor();
 }
 
-function renovarTokenSilenciosamente() {
-    return new Promise((resolve) => {
-        if (!googleTokenClient) { resolve(false); return; }
-        const callbackOriginal = googleTokenClient.callback;
-        googleTokenClient.callback = (resp) => {
-            googleTokenClient.callback = callbackOriginal;
-            if (resp.error) { resolve(false); return; }
-            googleAccessToken = resp.access_token;
-            salvarTokenNaSessao(resp);
+async function trocarCodigoPorToken(code) {
+    const supabaseToken = await obterSupabaseAccessToken();
+    if (!supabaseToken) return;
+    try {
+        const resp = await fetch('/api/google-token-exchange', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${supabaseToken}` },
+            body: JSON.stringify({ code })
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || 'Erro ao conectar com o Google');
+        googleAccessToken = data.access_token;
+        if (data.salvo_em) googleTokenSalvoEm = data.salvo_em;
+        atualizarStatusGoogle();
+        window.sincronizarComGoogleAgenda();
+    } catch (err) {
+        console.error(err);
+        alert('⚠️ ' + err.message);
+    }
+}
+
+// Pede um access_token novo ao nosso servidor, usando o refresh_token salvo. Sem popup nenhum.
+async function renovarTokenPeloServidor() {
+    const supabaseToken = await obterSupabaseAccessToken();
+    if (!supabaseToken) return false;
+    try {
+        const resp = await fetch('/api/google-token-refresh', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${supabaseToken}` }
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+            // Ainda não conectou nunca, ou o refresh_token expirou (7 dias em modo Testes) — sem problema, ela clica em Conectar.
             atualizarStatusGoogle();
-            resolve(true);
-        };
-        googleTokenClient.requestAccessToken({ prompt: '' });
-    });
+            return false;
+        }
+        googleAccessToken = data.access_token;
+        if (data.salvo_em) googleTokenSalvoEm = data.salvo_em;
+        atualizarStatusGoogle();
+        window.sincronizarComGoogleAgenda();
+        return true;
+    } catch (err) {
+        console.error('Erro ao renovar token pelo servidor:', err);
+        return false;
+    }
 }
 
 window.conectarGoogleAgenda = function() {
-    if (!googleTokenClient) { alert('A biblioteca do Google ainda está carregando, aguarde alguns segundos e tente de novo.'); return; }
-    googleTokenClient.requestAccessToken({ prompt: googleAccessToken ? '' : 'consent' });
+    if (!googleCodeClient) { alert('A biblioteca do Google ainda está carregando, aguarde alguns segundos e tente de novo.'); return; }
+    googleCodeClient.requestCode();
 }
 
 function atualizarStatusGoogle() {
     const el = document.getElementById('status-google-agenda');
+    const avisoEl = document.getElementById('aviso-google-expirando');
     if (el) el.innerText = googleAccessToken ? '🟢 Google Agenda conectada' : '⚪ Google Agenda desconectada';
+
+    if (!avisoEl) return;
+    if (googleAccessToken && googleTokenSalvoEm) {
+        const diasDesdeConexao = (Date.now() - new Date(googleTokenSalvoEm).getTime()) / (1000 * 60 * 60 * 24);
+        const diasRestantes = Math.max(0, Math.ceil(7 - diasDesdeConexao));
+        if (diasDesdeConexao >= 6) {
+            avisoEl.style.display = 'inline-block';
+            avisoEl.innerText = diasRestantes <= 0
+                ? '⚠️ Sua conexão com a Google Agenda vence hoje! Clique em Conectar para renovar.'
+                : '⚠️ Sua conexão com a Google Agenda vence amanhã! Clique em Conectar para renovar.';
+        } else {
+            avisoEl.style.display = 'none';
+        }
+    } else {
+        avisoEl.style.display = 'none';
+    }
 }
 
 async function chamarGoogleCalendar(method, path, body = null, calendarId = 'primary', jaTentouRenovar = false) {
@@ -254,7 +294,7 @@ async function chamarGoogleCalendar(method, path, body = null, calendarId = 'pri
         body: body ? JSON.stringify(body) : null
     });
     if (resp.status === 401 && !jaTentouRenovar) {
-        const renovou = await renovarTokenSilenciosamente();
+        const renovou = await renovarTokenPeloServidor();
         if (renovou) return chamarGoogleCalendar(method, path, body, calendarId, true);
     }
     if (!resp.ok) {
@@ -559,12 +599,24 @@ window.verificarConflitoAgenda = function(dataStr, horarioStr, duracaoNova, idAt
     let fimNovo = inicioNovo + parseInt(duracaoNova);
 
     let eventosDoDia = listaAgendaGlobal.filter(a => a.data === dataStr && a.id !== idAtual);
-    
+
     let ocupados = eventosDoDia.map(ev => {
         let [h, m] = (ev.horario || '09:00').split(':').map(Number);
         let inicio = h * 60 + m;
         let fim = inicio + (ev.duracao ? parseInt(ev.duracao) : 60);
         return { inicio, fim, descricao: ev.descricao };
+    });
+
+    // Também considera os compromissos que vêm de outras agendas do Google (fora do app)
+    (window.eventosGoogleCache || []).forEach(ev => {
+        if (!ev.start || ev.allDay) return;
+        const inicioDate = new Date(ev.start);
+        const fimDate = ev.end ? new Date(ev.end) : new Date(inicioDate.getTime() + 60 * 60000);
+        const dataDoEvento = `${inicioDate.getFullYear()}-${String(inicioDate.getMonth() + 1).padStart(2, '0')}-${String(inicioDate.getDate()).padStart(2, '0')}`;
+        if (dataDoEvento !== dataStr) return;
+        const inicio = inicioDate.getHours() * 60 + inicioDate.getMinutes();
+        const fim = fimDate.getHours() * 60 + fimDate.getMinutes();
+        ocupados.push({ inicio, fim, descricao: (ev.title || 'Compromisso').replace('🗓️ ', '') });
     });
 
     ocupados.sort((a, b) => a.inicio - b.inicio);
@@ -603,6 +655,107 @@ window.atualizarCalendarioNaTela = function() {
         calendarInstance.addEventSource(window.eventosGoogleCache || []);
         calendarInstance.render();
     }
+    // Mantém as outras visões da agenda em dia também, se estiverem na tela
+    if (document.getElementById('tela-agenda-dia')?.classList.contains('ativa')) window.renderizarAgendaDoDia();
+    if (document.getElementById('tela-agendamentos-lista')?.classList.contains('ativa')) window.renderizarListaAgendamentos();
+}
+
+// ==========================================
+// 📋 AGENDA DO DIA (visão diária) + 🧾 LISTA DE AGENDAMENTOS
+// ==========================================
+let diaSelecionadoAgenda = new Date();
+
+function formatarDataISO(d) {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function formatarDataBonita(d) {
+    const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+    const alvo = new Date(d); alvo.setHours(0, 0, 0, 0);
+    const diffDias = Math.round((alvo - hoje) / 86400000);
+    const strData = d.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' });
+    if (diffDias === 0) return `Hoje · ${strData}`;
+    if (diffDias === 1) return `Amanhã · ${strData}`;
+    if (diffDias === -1) return `Ontem · ${strData}`;
+    return strData;
+}
+
+function cardCompromisso(item, aoClicar) {
+    const cor = item.tipo === 'pessoal' ? 'var(--pessoal-texto)' : item.tipo === 'google' ? '#475569' : 'var(--roxo-vibrante)';
+    const icone = item.tipo === 'pessoal' ? '📌' : item.tipo === 'google' ? '🗓️' : '👤';
+    const clicavel = aoClicar ? `style="border-left-color:${cor}; cursor:pointer;" onclick="${aoClicar}"` : `style="border-left-color:${cor}; opacity:0.85;"`;
+    return `
+        <div class="card-item-paciente" ${clicavel}>
+            <div style="font-weight:700; color:${cor}; font-size:0.85em;">${item.horario}${item.duracao ? ' · ' + item.duracao + 'min' : ''}</div>
+            <div style="font-size:1.05em; margin-top:4px;">${icone} ${item.titulo}</div>
+        </div>
+    `;
+}
+
+window.renderizarAgendaDoDia = function() {
+    const dataStr = formatarDataISO(diaSelecionadoAgenda);
+    const tituloEl = document.getElementById('agenda-dia-titulo');
+    if (tituloEl) tituloEl.innerText = formatarDataBonita(diaSelecionadoAgenda);
+
+    const container = document.getElementById('lista-agenda-dia-container');
+    if (!container) return;
+
+    const itensApp = listaAgendaGlobal.filter(a => a.data === dataStr).map(a => ({
+        horario: a.horario || '09:00', duracao: a.duracao || 60, titulo: a.descricao, tipo: a.tipo, id: a.id
+    }));
+
+    const itensGoogle = (window.eventosGoogleCache || []).filter(ev => {
+        if (!ev.start || ev.allDay) return false;
+        return formatarDataISO(new Date(ev.start)) === dataStr;
+    }).map(ev => {
+        const d = new Date(ev.start);
+        return { horario: `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`, duracao: null, titulo: (ev.title || '').replace('🗓️ ', ''), tipo: 'google' };
+    });
+
+    const todos = [...itensApp, ...itensGoogle].sort((a, b) => a.horario.localeCompare(b.horario));
+
+    if (!todos.length) {
+        container.innerHTML = '<p style="color: var(--texto-secundario); text-align:center; padding: 30px 0;">Nenhum compromisso nesse dia. 🎉</p>';
+        return;
+    }
+
+    container.innerHTML = todos.map(item =>
+        cardCompromisso(item, item.id ? `abrirModalNovoAgendamento({id:'${item.id}'})` : null)
+    ).join('');
+}
+
+window.navegarDiaAgenda = function(delta) {
+    diaSelecionadoAgenda.setDate(diaSelecionadoAgenda.getDate() + delta);
+    window.renderizarAgendaDoDia();
+}
+
+window.irParaHoje = function() {
+    diaSelecionadoAgenda = new Date();
+    window.renderizarAgendaDoDia();
+}
+
+window.renderizarListaAgendamentos = function() {
+    const container = document.getElementById('lista-agendamentos-completa');
+    if (!container) return;
+    if (!listaAgendaGlobal.length) {
+        container.innerHTML = '<p style="color: var(--texto-secundario);">Nenhum agendamento cadastrado ainda.</p>';
+        return;
+    }
+    const ordenado = [...listaAgendaGlobal].sort((a, b) => (a.data + (a.horario || '')).localeCompare(b.data + (b.horario || '')));
+    let ultimaData = null;
+    let html = '';
+    ordenado.forEach(item => {
+        if (item.data !== ultimaData) {
+            ultimaData = item.data;
+            const [ano, mes, dia] = item.data.split('-').map(Number);
+            html += `<h3 style="color: var(--texto-berinjela); margin: 25px 0 10px 0; font-size:1em; text-transform: capitalize;">${formatarDataBonita(new Date(ano, mes - 1, dia))}</h3>`;
+        }
+        html += cardCompromisso(
+            { horario: item.horario || '09:00', duracao: item.duracao || 60, titulo: item.descricao, tipo: item.tipo },
+            `abrirModalNovoAgendamento({id:'${item.id}'})`
+        );
+    });
+    container.innerHTML = html;
 }
 
 // ==========================================
@@ -616,7 +769,9 @@ window.mudarTela = function(idTela, elementoMenu) {
     document.getElementById(idTela).classList.add('ativa');
     document.querySelectorAll('.menu-item').forEach(i => i.classList.remove('ativo'));
     elementoMenu.classList.add('ativo');
-    if(idTela === 'tela-agenda' && calendarInstance) setTimeout(() => { calendarInstance.updateSize(); calendarInstance.render(); }, 100);
+    if (idTela === 'tela-agenda' && calendarInstance) setTimeout(() => { calendarInstance.updateSize(); calendarInstance.render(); }, 100);
+    if (idTela === 'tela-agenda-dia') window.renderizarAgendaDoDia();
+    if (idTela === 'tela-agendamentos-lista') window.renderizarListaAgendamentos();
     window.fecharMenuMobile();
 }
 
