@@ -9,7 +9,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 let currentUser = null;
 
-// Variáveis Globais (agora carregadas do Supabase, não mais do localStorage)
+// Variáveis Globais
 let listaPacientesGlobais = [];
 let listaAgendaGlobal = [];
 let listaTransacoesGlobais = [];
@@ -20,18 +20,15 @@ let telaAlvoPendente = null;
 let elementoMenuPendente = null;
 let calendarInstance = null;
 
-// Grava TUDO que está em memória de volta no Supabase.
-// Estratégia simples: apaga as linhas do usuário e reinsere o estado atual.
-// Funciona muito bem para o volume de dados de uma clínica pessoal.
+// Função de salvamento seguro usando upsert
 async function salvarBD() {
     if (!currentUser) return;
     const uid = currentUser.id;
 
     try {
-        // Pacientes (o cascade no banco já apaga os prontuários órfãos junto)
-        await supabase.from('pacientes').delete().eq('user_id', uid);
-        if (listaPacientesGlobais.length) {
-            const { error } = await supabase.from('pacientes').insert(listaPacientesGlobais.map(p => ({
+        // 1. Pacientes
+        if (listaPacientesGlobais.length > 0) {
+            const { error } = await supabase.from('pacientes').upsert(listaPacientesGlobais.map(p => ({
                 id: p.id, user_id: uid, nome: p.nome || '', nascimento: p.nascimento || null,
                 whatsapp: p.whatsapp || null, email: p.email || null, cpf: p.cpf || null,
                 endereco: p.endereco || null, cep: p.cep || null,
@@ -40,22 +37,21 @@ async function salvarBD() {
             if (error) throw error;
         }
 
-        // Prontuários (achatando o array aninhado de cada paciente)
+        // 2. Prontuários (Achatando o array de cada paciente)
         let todosProntuarios = [];
         listaPacientesGlobais.forEach(p => {
             (p.prontuarios || []).forEach(pr => {
                 todosProntuarios.push({ id: pr.id, paciente_id: p.id, user_id: uid, data: pr.data, texto: pr.texto });
             });
         });
-        if (todosProntuarios.length) {
-            const { error } = await supabase.from('prontuarios').insert(todosProntuarios);
+        if (todosProntuarios.length > 0) {
+            const { error } = await supabase.from('prontuarios').upsert(todosProntuarios);
             if (error) throw error;
         }
 
-        // Agenda
-        await supabase.from('agenda').delete().eq('user_id', uid);
-        if (listaAgendaGlobal.length) {
-            const { error } = await supabase.from('agenda').insert(listaAgendaGlobal.map(a => ({
+        // 3. Agenda
+        if (listaAgendaGlobal.length > 0) {
+            const { error } = await supabase.from('agenda').upsert(listaAgendaGlobal.map(a => ({
                 id: a.id, user_id: uid, tipo: a.tipo, descricao: a.descricao || '',
                 whatsapp: a.whatsapp || null, data: a.data, horario: a.horario, duracao: a.duracao || 60,
                 google_event_id: a.google_event_id || null
@@ -63,20 +59,18 @@ async function salvarBD() {
             if (error) throw error;
         }
 
-        // Transações
-        await supabase.from('transacoes').delete().eq('user_id', uid);
-        if (listaTransacoesGlobais.length) {
-            const { error } = await supabase.from('transacoes').insert(listaTransacoesGlobais.map(t => ({
+        // 4. Transações Financeiras
+        if (listaTransacoesGlobais.length > 0) {
+            const { error } = await supabase.from('transacoes').upsert(listaTransacoesGlobais.map(t => ({
                 id: t.id, user_id: uid, nome_paciente: t.nomePaciente || null,
                 valor: parseFloat(t.valor) || 0, data: t.data, status: t.status
             })));
             if (error) throw error;
         }
 
-        // Tarefas
-        await supabase.from('tarefas').delete().eq('user_id', uid);
-        if (listaTarefasGlobais.length) {
-            const { error } = await supabase.from('tarefas').insert(listaTarefasGlobais.map(t => ({
+        // 5. Tarefas
+        if (listaTarefasGlobais.length > 0) {
+            const { error } = await supabase.from('tarefas').upsert(listaTarefasGlobais.map(t => ({
                 id: t.id, user_id: uid, texto: t.texto, status: t.status, prioridade: t.prioridade
             })));
             if (error) throw error;
@@ -180,7 +174,6 @@ async function iniciarApp() {
 // ==========================================
 // 📅 GOOGLE AGENDA (Google Calendar API)
 // ==========================================
-// ⚠️ Troque pelo Client ID gerado no Google Cloud Console (termina em .apps.googleusercontent.com)
 const GOOGLE_CLIENT_ID = '703690616893-ppk0n9r67h8q1ugl9f2scevqgj9ejp2c.apps.googleusercontent.com';
 const GOOGLE_SCOPE = 'https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.readonly';
 
@@ -227,7 +220,6 @@ function inicializarGoogleAuth() {
     tentarRestaurarTokenDaSessao();
 }
 
-// Pede um token novo sem abrir popup nenhum (só funciona se ela ainda estiver logada no Google nesse navegador)
 function renovarTokenSilenciosamente() {
     return new Promise((resolve) => {
         if (!googleTokenClient) { resolve(false); return; }
@@ -262,7 +254,6 @@ async function chamarGoogleCalendar(method, path, body = null, calendarId = 'pri
         body: body ? JSON.stringify(body) : null
     });
     if (resp.status === 401 && !jaTentouRenovar) {
-        // Token expirou: tenta renovar em silêncio e refazer a chamada uma única vez
         const renovou = await renovarTokenSilenciosamente();
         if (renovou) return chamarGoogleCalendar(method, path, body, calendarId, true);
     }
@@ -274,7 +265,6 @@ async function chamarGoogleCalendar(method, path, body = null, calendarId = 'pri
     return resp.json();
 }
 
-// Cria ou atualiza (se já existir) o evento correspondente no Google Agenda
 async function sincronizarEventoUnico(item) {
     if (!googleAccessToken || !item) return;
     const duracaoMinutos = item.duracao ? parseInt(item.duracao) : 60;
@@ -311,7 +301,6 @@ async function excluirEventoGoogle(item) {
     }
 }
 
-// Busca a lista de todas as agendas (calendários) que a conta tem acesso
 async function buscarListaDeCalendarios() {
     const resp = await fetch('https://www.googleapis.com/calendar/v3/users/me/calendarList', {
         headers: { 'Authorization': `Bearer ${googleAccessToken}` }
@@ -361,11 +350,8 @@ window.salvarCalendariosSelecionados = function() {
     window.sincronizarComGoogleAgenda();
 }
 
-// Cores com bom contraste pra distinguir cada agenda no calendário (texto branco em cima)
 const PALETA_AGENDAS_EXTERNAS = ['#475569', '#7C3AED', '#0E7490', '#B45309', '#4D7C0F', '#9D174D'];
 
-// Busca os compromissos que já existem nas agendas selecionadas do Google
-// e mostra junto no calendário, só pra visualização (não editável por aqui).
 window.sincronizarComGoogleAgenda = async function() {
     if (!googleAccessToken) return;
     try {
@@ -405,7 +391,6 @@ window.sincronizarComGoogleAgenda = async function() {
     }
 }
 
-// Efeito de Confetes Festivos ao Salvar
 function dispararConfetes() {
     const scriptCdn = document.createElement('script');
     scriptCdn.src = 'https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.min.js';
@@ -428,7 +413,7 @@ window.onload = async function() {
 };
 
 // ==========================================
-// 🗓️ CALENDÁRIO (8h às 23h + Arrastar + Clique)
+// 🗓️ CALENDÁRIO 
 // ==========================================
 window.inicializarCalendario = function() {
     const calendarEl = document.getElementById('calendar');
@@ -447,7 +432,7 @@ window.inicializarCalendario = function() {
         height: 580,
         events: window.obterEventosCalendario(),
         eventClick: function(info) { window.abrirModalNovoAgendamento(info.event); },
-        eventDragStop: function(info) {
+        eventDragStop: async function(info) {
             const lixeiraEl = document.getElementById('lixeira-calendario');
             if (lixeiraEl) {
                 const rect = lixeiraEl.getBoundingClientRect();
@@ -458,6 +443,9 @@ window.inicializarCalendario = function() {
                     if (confirm(`Deseja eliminar o agendamento de "${info.event.title}"?`)) {
                         const itemRemovido = listaAgendaGlobal.find(a => a.id === info.event.id);
                         listaAgendaGlobal = listaAgendaGlobal.filter(a => a.id !== info.event.id);
+                        
+                        await supabase.from('agenda').delete().eq('id', info.event.id); // Deleção cirúrgica
+                        
                         excluirEventoGoogle(itemRemovido);
                         salvarBD();
                         window.atualizarCalendarioNaTela();
@@ -466,7 +454,6 @@ window.inicializarCalendario = function() {
             }
         },
         eventDrop: function(info) {
-            // Captura a nova data e o novo horário para o qual foi arrastado
             const novaDataHora = info.event.start;
             const ano = novaDataHora.getFullYear();
             const mes = String(novaDataHora.getMonth() + 1).padStart(2, '0');
@@ -477,27 +464,23 @@ window.inicializarCalendario = function() {
             const novaDataStr = `${ano}-${mes}-${dia}`;
             const novoHorarioStr = `${horas}:${minutos}`;
 
-            // Pergunta de Segurança!
             if (confirm(`Deseja realmente mover o agendamento de "${info.event.title}" para o dia ${dia}/${mes} às ${novoHorarioStr}?`)) {
                 let index = listaAgendaGlobal.findIndex(a => a.id === info.event.id);
                 if (index > -1) {
                     listaAgendaGlobal[index].data = novaDataStr;
-                    listaAgendaGlobal[index].horario = novoHorarioStr; // Salva o novo horário também!
+                    listaAgendaGlobal[index].horario = novoHorarioStr;
                     sincronizarEventoUnico(listaAgendaGlobal[index]).then(salvarBD);
                     dispararConfetes();
                 }
             } else {
-                // Mágica: Se ela cancelar, o bloquinho volta para onde estava antes!
                 info.revert(); 
             }
         },
         eventResize: function(info) {
-            // Quando ela estica ou encolhe a caixinha de tempo da sessão
             if (confirm(`Deseja alterar a duração da sessão de "${info.event.title}"?`)) {
                 const inicio = info.event.start;
                 const fim = info.event.end;
                 
-                // Calcula a nova duração em minutos matematicamente
                 const diferencaMs = fim - inicio;
                 const novaDuracaoMinutos = Math.round(diferencaMs / 60000);
 
@@ -508,7 +491,6 @@ window.inicializarCalendario = function() {
                     dispararConfetes();
                 }
             } else {
-                // Se ela cancelar, a caixinha volta pro tamanho original
                 info.revert();
             }
         },
@@ -545,12 +527,11 @@ window.inicializarCalendario = function() {
     });
     calendarInstance.render();
 }
-       // Calculo do novo horário
+
 window.obterEventosCalendario = function() {
     return listaAgendaGlobal.map(item => {
         const isPessoal = item.tipo === 'pessoal';
         
-        // Calcula o horário de término (padrão é 60 se for antigo e não tiver a info salva)
         const duracaoMinutos = item.duracao ? parseInt(item.duracao) : 60; 
         const [horas, minutos] = (item.horario || '09:00').split(':').map(Number);
         
@@ -565,23 +546,20 @@ window.obterEventosCalendario = function() {
             id: item.id,
             title: (isPessoal ? '📌 ' : '👤 ') + item.descricao + (duracaoMinutos === 30 ? ' (30m)' : ''),
             start: `${item.data}T${horarioInicioStr}`,
-            end: `${item.data}T${horarioFimStr}`, // Isso faz o FullCalendar respeitar o tamanho real da sessão!
+            end: `${item.data}T${horarioFimStr}`, 
             backgroundColor: isPessoal ? '#7B1FA2' : '#7C3AED',
             borderColor: isPessoal ? '#7B1FA2' : '#7C3AED'
         };
     });
 }
 
-          //Analisar os conflitos matemáticos de horas e achar os buracos livres
 window.verificarConflitoAgenda = function(dataStr, horarioStr, duracaoNova, idAtual = null) {
     let [hNova, mNova] = horarioStr.split(':').map(Number);
     let inicioNovo = hNova * 60 + mNova;
     let fimNovo = inicioNovo + parseInt(duracaoNova);
 
-    // Pegar eventos só desse dia, ignorando o próprio evento (útil para quando for editar)
     let eventosDoDia = listaAgendaGlobal.filter(a => a.data === dataStr && a.id !== idAtual);
     
-    // Transformar tudo em números de minutos passados desde 00:00 para facilitar o cruzamento
     let ocupados = eventosDoDia.map(ev => {
         let [h, m] = (ev.horario || '09:00').split(':').map(Number);
         let inicio = h * 60 + m;
@@ -589,23 +567,20 @@ window.verificarConflitoAgenda = function(dataStr, horarioStr, duracaoNova, idAt
         return { inicio, fim, descricao: ev.descricao };
     });
 
-    // Ordenar cronologicamente do mais cedo pro mais tarde
     ocupados.sort((a, b) => a.inicio - b.inicio);
 
     for (let i = 0; i < ocupados.length; i++) {
         let evento = ocupados[i];
         
-        // A mágica da colisão: Se começa ANTES do outro terminar, e termina DEPOIS do outro começar = BATEU HORÁRIO!
         if (inicioNovo < evento.fim && fimNovo > evento.inicio) {
             
-            // Tentar achar o próximo espaço livre sugerido
             let sugestao = evento.fim;
             
             for(let j = i + 1; j < ocupados.length; j++) {
                 if ((sugestao + parseInt(duracaoNova)) <= ocupados[j].inicio) {
-                    break; // Achou espaço livre!
+                    break; 
                 } else {
-                    sugestao = ocupados[j].fim; // Continua pulando para o fim do próximo paciente
+                    sugestao = ocupados[j].fim; 
                 }
             }
 
@@ -733,13 +708,17 @@ window.abrirModalNovoAgendamento = function(calendarEvent = null) {
 }
 
 window.fecharModalAgendamento = function() { document.getElementById('modal-agendamento').style.display = 'none'; }
-window.deletarAgendamentoDoModal = function() {
+window.deletarAgendamentoDoModal = async function() {
     const id = document.getElementById('agenda-id').value;
     if (id && confirm("Tem certeza que deseja excluir este agendamento?")) {
         const itemRemovido = listaAgendaGlobal.find(a => a.id === id);
         listaAgendaGlobal = listaAgendaGlobal.filter(a => a.id !== id);
+        
+        await supabase.from('agenda').delete().eq('id', id); // Deleção cirúrgica
         excluirEventoGoogle(itemRemovido).then(salvarBD);
-        window.atualizarCalendarioNaTela(); window.fecharModalAgendamento();
+        
+        window.atualizarCalendarioNaTela(); 
+        window.fecharModalAgendamento();
     }
 }
 window.mudarTipoAgendamento = function(tipo) {
@@ -747,7 +726,6 @@ window.mudarTipoAgendamento = function(tipo) {
     const btnP = document.getElementById('toggle-paciente');
     const btnPers = document.getElementById('toggle-pessoal');
     
-    // Pegando os campos que precisam ser obrigatórios dependendo da aba
     const selectPaciente = document.getElementById('select-paciente-agenda');
     const inputCompromisso = document.getElementById('input-compromisso-pessoal');
 
@@ -758,7 +736,6 @@ window.mudarTipoAgendamento = function(tipo) {
         document.getElementById('campo-duracao-pessoal').style.display = 'block';
         document.getElementById('bloco-duracao-sessao').style.display = 'none';
         
-        // Tira a obrigatoriedade do Paciente e exige a Descrição do Compromisso
         if (selectPaciente) selectPaciente.removeAttribute('required');
         if (inputCompromisso) inputCompromisso.setAttribute('required', 'true');
         
@@ -769,7 +746,6 @@ window.mudarTipoAgendamento = function(tipo) {
         document.getElementById('bloco-campos-paciente').style.display = 'block';
         document.getElementById('bloco-duracao-sessao').style.display = 'block';
         
-        // Exige o Paciente e tira a obrigatoriedade da Descrição
         if (selectPaciente) selectPaciente.setAttribute('required', 'true');
         if (inputCompromisso) inputCompromisso.removeAttribute('required');
     }
@@ -816,9 +792,6 @@ window.salvarAgendamento = async function(e) {
     const horario = document.getElementById('input-horario-agenda').value;
     const rec = document.getElementById('check-recorrencia').checked;
     
-    // =========================================================================
-    // CAPTURAR A DURAÇÃO (Se for pessoal, pega do input livre; senão do select)
-    // =========================================================================
     let duracao = 60;
     if (tipo === 'pessoal') {
         const durPessoaInput = document.getElementById('input-duracao-pessoal');
@@ -828,15 +801,11 @@ window.salvarAgendamento = async function(e) {
         duracao = duracaoSelect ? parseInt(duracaoSelect.value) : 60;
     }
     
-    // =========================================================================
-    // A TRAVA DE SEGURANÇA! (Valida conflito com qualquer duração em minutos)
-    // =========================================================================
     let analise = window.verificarConflitoAgenda(dataInicialStr, horario, duracao, agendaIdInput || null);
     if (analise.temConflito) {
         alert(analise.mensagem);
         return;
     }
-    // =========================================================================
 
     let [ano, mes, dia] = dataInicialStr.split('-').map(Number);
     let dataBase = new Date(ano, mes - 1, dia);
@@ -850,7 +819,7 @@ window.salvarAgendamento = async function(e) {
                 listaAgendaGlobal[index].descricao = document.getElementById('input-compromisso-pessoal').value;
                 listaAgendaGlobal[index].data = dataInicialStr;
                 listaAgendaGlobal[index].horario = horario;
-                listaAgendaGlobal[index].duracao = duracao; // <- Salva a duração na Edição
+                listaAgendaGlobal[index].duracao = duracao; 
                 delete listaAgendaGlobal[index].whatsapp;
             } else {
                 const pacNome = document.getElementById('select-paciente-agenda').value;
@@ -864,7 +833,7 @@ window.salvarAgendamento = async function(e) {
                 listaAgendaGlobal[index].whatsapp = obj ? obj.whatsapp : '';
                 listaAgendaGlobal[index].data = dataInicialStr;
                 listaAgendaGlobal[index].horario = horario;
-                listaAgendaGlobal[index].duracao = duracao; // <- Salva a duração na Edição
+                listaAgendaGlobal[index].duracao = duracao; 
             }
             await sincronizarEventoUnico(listaAgendaGlobal[index]);
             await salvarBD(); dispararConfetes(); window.fecharModalAgendamento(); window.atualizarCalendarioNaTela(); return;
@@ -1032,9 +1001,10 @@ window.salvarPaciente = function(e) {
     salvarBD(); dispararConfetes(); window.fecharModalPaciente(); window.carregarPacientes(); window.baixarListaDePacientesEmBackground();
 }
 
-window.excluirPaciente = function(id) {
+window.excluirPaciente = async function(id) {
     if(confirm("Deseja excluir este paciente?")) {
         listaPacientesGlobais = listaPacientesGlobais.filter(p => p.id !== id);
+        await supabase.from('pacientes').delete().eq('id', id); // Deleção cirúrgica
         salvarBD(); window.carregarPacientes(); window.baixarListaDePacientesEmBackground();
     }
 }
@@ -1074,7 +1044,14 @@ window.salvarTransacaoFinanceira = function(e) {
     salvarBD(); dispararConfetes(); window.fecharModalTransacao(); window.carregarFinanceiro();
 }
 window.alternarStatusFin = function(id) { let t = listaTransacoesGlobais.find(x => x.id === id); if(t) { t.status = t.status === 'Pago' ? 'Pendente' : 'Pago'; salvarBD(); window.carregarFinanceiro(); } }
-window.deletarTransacao = function(id) { if(confirm("Excluir este lançamento?")) { listaTransacoesGlobais = listaTransacoesGlobais.filter(x => x.id !== id); salvarBD(); window.carregarFinanceiro(); } }
+
+window.deletarTransacao = async function(id) { 
+    if(confirm("Excluir este lançamento?")) { 
+        listaTransacoesGlobais = listaTransacoesGlobais.filter(x => x.id !== id); 
+        await supabase.from('transacoes').delete().eq('id', id); // Deleção cirúrgica
+        salvarBD(); window.carregarFinanceiro(); 
+    } 
+}
 
 window.carregarTarefas = function() {
     const c = document.getElementById('lista-tarefas-container'); if(!c) return;
@@ -1094,11 +1071,15 @@ window.carregarTarefas = function() {
 }
 window.adicionarTarefa = function(e) { e.preventDefault(); listaTarefasGlobais.push({ id: crypto.randomUUID(), texto: document.getElementById('input-nova-tarefa').value, status: 'Pendente', prioridade: document.getElementById('select-prioridade-tarefa').value }); salvarBD(); document.getElementById('input-nova-tarefa').value = ''; window.carregarTarefas(); }
 window.mudarStatusTarefa = function(id) { let t = listaTarefasGlobais.find(x => x.id === id); if(t) { t.status = t.status === 'Concluída' ? 'Pendente' : 'Concluída'; salvarBD(); window.carregarTarefas(); } }
-window.removerTarefa = function(id) { listaTarefasGlobais = listaTarefasGlobais.filter(x => x.id !== id); salvarBD(); window.carregarTarefas(); }
 
+window.removerTarefa = async function(id) { 
+    listaTarefasGlobais = listaTarefasGlobais.filter(x => x.id !== id); 
+    await supabase.from('tarefas').delete().eq('id', id); // Deleção cirúrgica
+    salvarBD(); window.carregarTarefas(); 
+}
 
 // ==========================================
-// PRONTUÁRIO ELETRÔNICO DA PACIENTE (NOVO)
+// PRONTUÁRIO ELETRÔNICO DA PACIENTE
 // ==========================================
 window.abrirModalProntuario = function(pacienteId) {
     const paciente = listaPacientesGlobais.find(p => p.id === pacienteId);
@@ -1115,7 +1096,7 @@ window.abrirModalProntuario = function(pacienteId) {
 
 window.limparFormProntuario = function() {
     document.getElementById('prontuario-item-id').value = '';
-    document.getElementById('input-data-prontuario').valueAsDate = new Date(); // Inicia com a data de hoje
+    document.getElementById('input-data-prontuario').valueAsDate = new Date(); 
     document.getElementById('input-texto-prontuario').value = '';
 }
 
@@ -1132,20 +1113,17 @@ window.salvarProntuario = function(e) {
     
     let index = listaPacientesGlobais.findIndex(p => p.id === pacienteId);
     if (index > -1) {
-        // Se a lista de prontuários não existir, criamos agora.
         if (!listaPacientesGlobais[index].prontuarios) {
             listaPacientesGlobais[index].prontuarios = [];
         }
         
         if (itemId) {
-            // Se tem item ID, é edição do prontuário
             let pIndex = listaPacientesGlobais[index].prontuarios.findIndex(pr => pr.id === itemId);
             if (pIndex > -1) {
                 listaPacientesGlobais[index].prontuarios[pIndex].data = dataStr;
                 listaPacientesGlobais[index].prontuarios[pIndex].texto = texto;
             }
         } else {
-            // Se não tem item ID, é um Prontuário Novo (insere no começo da lista)
             listaPacientesGlobais[index].prontuarios.unshift({
                 id: crypto.randomUUID(),
                 data: dataStr,
@@ -1154,8 +1132,8 @@ window.salvarProntuario = function(e) {
         }
         
         salvarBD();
-        window.limparFormProntuario(); // Limpa o formulário pra digitar o próximo se quiser
-        window.renderizarHistoricoProntuario(pacienteId); // Recarrega a lista embaixo
+        window.limparFormProntuario(); 
+        window.renderizarHistoricoProntuario(pacienteId); 
         dispararConfetes();
     }
 }
@@ -1171,7 +1149,6 @@ window.renderizarHistoricoProntuario = function(pacienteId) {
     
     container.innerHTML = '';
     
-    // Organiza para mostrar o mais recente em cima
     let listaOrdenada = [...paciente.prontuarios].sort((a, b) => new Date(b.data) - new Date(a.data));
     
     listaOrdenada.forEach(pron => {
@@ -1181,7 +1158,6 @@ window.renderizarHistoricoProntuario = function(pacienteId) {
         const item = document.createElement('div');
         item.className = 'card-prontuario';
         
-        // Substituindo as quebras de linha reais por tags <br> para a exibição completa
         const textoQuebradoVisivel = pron.texto.replace(/\n/g, '<br>');
 
         item.innerHTML = `
@@ -1214,11 +1190,12 @@ window.editarProntuario = function(pacienteId, prontuarioId) {
     }
 }
 
-window.excluirProntuario = function(pacienteId, prontuarioId) {
+window.excluirProntuario = async function(pacienteId, prontuarioId) {
     if(confirm("Tem certeza que deseja apagar esta anotação do prontuário? Esta ação não tem volta.")) {
         let index = listaPacientesGlobais.findIndex(p => p.id === pacienteId);
         if (index > -1) {
             listaPacientesGlobais[index].prontuarios = listaPacientesGlobais[index].prontuarios.filter(p => p.id !== prontuarioId);
+            await supabase.from('prontuarios').delete().eq('id', prontuarioId); // Deleção cirúrgica
             salvarBD();
             window.renderizarHistoricoProntuario(pacienteId);
         }
