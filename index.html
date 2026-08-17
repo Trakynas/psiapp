@@ -18,14 +18,20 @@
 
     <!-- CSS -->
     <link rel="stylesheet" href="/style.css">
+
+    <!-- PWA: ícone e instalação (PC e Android) -->
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#7C3AED">
+    <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+    <link rel="apple-touch-icon" href="/icon-180.png">
 </head>
 <body>
 
     <!-- TELA DE LOGIN -->
     <div id="tela-login" class="modal-overlay" style="display: flex; background: linear-gradient(135deg, #F8F6FA 0%, #EFEAF5 100%); backdrop-filter: none;">
         <div class="modal-container" style="max-width: 380px; text-align: center; padding: 40px 30px;">
-            <div style="font-size: 3em; margin-bottom: 10px;">🧠</div>
-            <h2 style="color: var(--texto-berinjela); margin-top: 0;">PsiApp</h2>
+            <img src="/logo-aline.png" alt="Aline Schütz" style="width: 90px; height: 90px; border-radius: 20px; margin-bottom: 10px;">
             <p style="color: var(--texto-secundario); margin-bottom: 25px; font-size: 0.95em;">Faça login para acessar sua clínica</p>
             <form onsubmit="fazerLogin(event)">
                 <div class="form-group" style="text-align: left;">
@@ -46,12 +52,12 @@
 
     <div id="app-shell" style="display: none;">
     <div class="mobile-topbar">
-        <div class="logo-mobile">🧠 PsiApp</div>
+        <div class="logo-mobile"><img src="/logo-aline.png" alt="Aline Schütz" style="width: 28px; height: 28px; border-radius: 8px; vertical-align: middle; margin-right: 6px;">PsiApp</div>
         <button class="btn-hamburger" onclick="toggleMenuMobile()">☰ Menu</button>
     </div>
 
     <div class="sidebar">
-        <div class="logo">🧠 PsiApp</div>
+        <div class="logo"><img src="/logo-aline.png" alt="Aline Schütz" style="width: 34px; height: 34px; border-radius: 9px;">PsiApp</div>
         <div class="menu-item ativo" onclick="mudarTela('tela-agenda-dia', this)">📋 Agenda</div>
         <div class="menu-item" onclick="mudarTela('tela-agendamentos-lista', this)">🧾 Agendamentos</div>
         <div class="menu-item" onclick="mudarTela('tela-agenda', this)">🗓️ Calendário</div>
@@ -239,7 +245,7 @@
         
         <div id="tela-configuracoes" class="tela">
             <div class="header"><h1>Configurações ⚙️</h1></div>
-            <p style="color: var(--texto-secundario);">Sistema configurado para ambiente local (Vite + LocalStorage).</p>
+            <p style="color: var(--texto-secundario);">Sistema integrado com Supabase (nuvem) e Google Agenda.</p>
         </div>
     </div>
 
@@ -480,5 +486,10 @@
 
     </div> <!-- /app-shell -->
 
+    <script>
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/service-worker.js').catch(() => {});
+        }
+    </script>
 </body>
 </html>

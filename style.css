@@ -302,6 +302,16 @@ input:focus, select:focus, textarea:focus { border-color: var(--roxo-vibrante) !
     .main-content { padding: 15px; }
     .calendario-wrapper { max-height: 520px; }
     #calendar { height: 480px; }
+
+    /* Tela "Agenda" (visão do dia): a lista de compromissos usa a mesma classe
+       .calendario-wrapper da tela de Calendário, mas aqui não pode ficar limitada
+       a 520px sem rolagem, senão os itens extras (a partir do 4º) ficam por cima
+       da seção "Tarefas Rápidas do Dia" em vez de empurrá-la para baixo. */
+    #tela-agenda-dia .calendario-wrapper {
+        max-height: 55vh;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+    }
 }
 
 /* ========================================= */
