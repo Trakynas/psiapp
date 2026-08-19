@@ -172,6 +172,7 @@ async function iniciarApp() {
     window.carregarFinanceiro();
     window.renderizarAgendaDoDia();
     window.atualizarBadgeSolicitacoes();
+    sincronizarCalendariosSelecionadosDoServidor();
     aguardarGoogleIdentity(inicializarGoogleAuth);
     atualizarStatusGoogle();
 }
@@ -361,6 +362,24 @@ function obterCalendariosSelecionados() {
     } catch { return ['primary']; }
 }
 
+// Traz a lista de calendários selecionados do Supabase pro localStorage local
+// (ex: se ela abrir o app num navegador/celular diferente de onde configurou)
+async function sincronizarCalendariosSelecionadosDoServidor() {
+    try {
+        const { data, error } = await supabase
+            .from('configuracao_geral')
+            .select('calendarios_google')
+            .eq('user_id', currentUser.id)
+            .maybeSingle();
+        if (error) throw error;
+        if (data?.calendarios_google?.length) {
+            localStorage.setItem('psiapp_calendarios_selecionados', JSON.stringify(data.calendarios_google));
+        }
+    } catch (err) {
+        console.error('Erro ao sincronizar calendários selecionados do servidor:', err);
+    }
+}
+
 window.abrirModalCalendarios = async function() {
     if (!googleAccessToken) { alert('Conecte o Google Agenda primeiro.'); return; }
     const container = document.getElementById('lista-calendarios-google');
@@ -387,11 +406,25 @@ window.abrirModalCalendarios = async function() {
 
 window.fecharModalCalendarios = function() { document.getElementById('modal-calendarios-google').style.display = 'none'; }
 
-window.salvarCalendariosSelecionados = function() {
+window.salvarCalendariosSelecionados = async function() {
     const marcados = Array.from(document.querySelectorAll('#lista-calendarios-google input[type="checkbox"]:checked')).map(c => c.value);
-    localStorage.setItem('psiapp_calendarios_selecionados', JSON.stringify(marcados.length ? marcados : ['primary']));
+    const lista = marcados.length ? marcados : ['primary'];
+    localStorage.setItem('psiapp_calendarios_selecionados', JSON.stringify(lista));
     window.fecharModalCalendarios();
     window.sincronizarComGoogleAgenda();
+
+    // Salva também no Supabase — é o que a página pública de agendamento lê
+    // pra saber quais calendários checar antes de liberar um horário.
+    try {
+        const { error } = await supabase
+            .from('configuracao_geral')
+            .update({ calendarios_google: lista })
+            .eq('user_id', currentUser.id);
+        if (error) throw error;
+    } catch (err) {
+        console.error('Erro ao salvar calendários selecionados no servidor:', err);
+        alert('⚠️ A seleção foi salva neste navegador, mas não consegui sincronizar com o servidor — a página pública pode não refletir essa mudança ainda.');
+    }
 }
 
 const PALETA_AGENDAS_EXTERNAS = ['#475569', '#7C3AED', '#0E7490', '#B45309', '#4D7C0F', '#9D174D'];
