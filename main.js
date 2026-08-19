@@ -112,7 +112,10 @@ async function carregarTudoDoSupabase() {
     listaAgendaGlobal = (agRes.data || []).map(a => ({
         id: a.id, tipo: a.tipo, descricao: a.descricao, whatsapp: a.whatsapp, data: a.data,
         horario: a.horario ? a.horario.slice(0, 5) : a.horario, duracao: a.duracao,
-        google_event_id: a.google_event_id
+        google_event_id: a.google_event_id,
+        status: a.status || 'confirmado', origem: a.origem || 'interno',
+        paciente_nome: a.paciente_nome, paciente_telefone: a.paciente_telefone,
+        paciente_email: a.paciente_email, observacoes: a.observacoes
     }));
 
     listaTransacoesGlobais = (finRes.data || []).map(t => ({
@@ -168,6 +171,7 @@ async function iniciarApp() {
     window.carregarTarefas();
     window.carregarFinanceiro();
     window.renderizarAgendaDoDia();
+    window.atualizarBadgeSolicitacoes();
     aguardarGoogleIdentity(inicializarGoogleAuth);
     atualizarStatusGoogle();
 }
@@ -569,7 +573,7 @@ window.inicializarCalendario = function() {
 }
 
 window.obterEventosCalendario = function() {
-    return listaAgendaGlobal.map(item => {
+    return listaAgendaGlobal.filter(item => item.status !== 'pendente' && item.status !== 'recusado').map(item => {
         const isPessoal = item.tipo === 'pessoal';
         
         const duracaoMinutos = item.duracao ? parseInt(item.duracao) : 60; 
@@ -700,7 +704,7 @@ window.renderizarAgendaDoDia = function() {
     const container = document.getElementById('lista-agenda-dia-container');
     if (!container) return;
 
-    const itensApp = listaAgendaGlobal.filter(a => a.data === dataStr).map(a => ({
+    const itensApp = listaAgendaGlobal.filter(a => a.data === dataStr && a.status !== 'pendente' && a.status !== 'recusado').map(a => ({
         horario: a.horario || '09:00', duracao: a.duracao || 60, titulo: a.descricao, tipo: a.tipo, id: a.id
     }));
 
@@ -741,7 +745,9 @@ window.renderizarListaAgendamentos = function() {
         container.innerHTML = '<p style="color: var(--texto-secundario);">Nenhum agendamento cadastrado ainda.</p>';
         return;
     }
-    const ordenado = [...listaAgendaGlobal].sort((a, b) => (a.data + (a.horario || '')).localeCompare(b.data + (b.horario || '')));
+    const ordenado = [...listaAgendaGlobal]
+        .filter(item => item.status !== 'pendente' && item.status !== 'recusado')
+        .sort((a, b) => (a.data + (a.horario || '')).localeCompare(b.data + (b.horario || '')));
     let ultimaData = null;
     let html = '';
     ordenado.forEach(item => {
@@ -759,6 +765,213 @@ window.renderizarListaAgendamentos = function() {
 }
 
 // ==========================================
+// ⚙️ CONFIGURAÇÕES — expediente e duração das consultas
+// (usado pela página pública de agendamento pra saber o que oferecer)
+// ==========================================
+const DIAS_SEMANA = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
+
+window.carregarConfiguracaoExpediente = async function() {
+    const container = document.getElementById('lista-dias-expediente');
+    if (!container) return;
+    container.innerHTML = '<p style="color:var(--texto-secundario);">Carregando...</p>';
+
+    const [expRes, geralRes] = await Promise.all([
+        supabase.from('configuracao_expediente').select('*').order('dia_semana'),
+        supabase.from('configuracao_geral').select('*').limit(1).maybeSingle()
+    ]);
+
+    if (expRes.error) {
+        console.error('Erro ao carregar configuração de expediente:', expRes.error);
+        container.innerHTML = '<p style="color:var(--texto-alerta);">Não foi possível carregar. Tente novamente.</p>';
+        return;
+    }
+
+    const porDia = {};
+    (expRes.data || []).forEach(d => { porDia[d.dia_semana] = d; });
+
+    container.innerHTML = DIAS_SEMANA.map((nome, i) => {
+        const cfg = porDia[i] || { ativo: false, hora_inicio: '08:00', hora_fim: '18:00' };
+        const horaIni = (cfg.hora_inicio || '08:00:00').slice(0, 5);
+        const horaFim = (cfg.hora_fim || '18:00:00').slice(0, 5);
+        return `
+            <div style="display:flex; align-items:center; gap:14px; padding:12px 16px; background:var(--pessoal-bg); border-radius:12px; flex-wrap:wrap;">
+                <label style="display:flex; align-items:center; gap:8px; min-width:160px; font-weight:600; color:var(--texto-berinjela); cursor:pointer; white-space:nowrap;">
+                    <input type="checkbox" data-dia="${i}" class="chk-dia-ativo" ${cfg.ativo ? 'checked' : ''}> ${nome}
+                </label>
+                <input type="time" data-dia="${i}" class="input-hora-inicio" value="${horaIni}" style="min-width:110px;">
+                <span style="color:var(--texto-secundario);">até</span>
+                <input type="time" data-dia="${i}" class="input-hora-fim" value="${horaFim}" style="min-width:110px;">
+            </div>
+        `;
+    }).join('');
+
+    const geral = geralRes.data || { duracao_consulta_min: 50, intervalo_min: 10 };
+    document.getElementById('input-duracao-consulta').value = geral.duracao_consulta_min;
+    document.getElementById('input-intervalo-consulta').value = geral.intervalo_min;
+}
+
+window.salvarConfiguracaoExpediente = async function() {
+    const statusEl = document.getElementById('status-salvar-config');
+    if (!currentUser) return;
+    statusEl.textContent = 'Salvando...';
+
+    const linhas = DIAS_SEMANA.map((_, i) => {
+        const chk = document.querySelector(`.chk-dia-ativo[data-dia="${i}"]`);
+        const ini = document.querySelector(`.input-hora-inicio[data-dia="${i}"]`);
+        const fim = document.querySelector(`.input-hora-fim[data-dia="${i}"]`);
+        return {
+            dia_semana: i,
+            user_id: currentUser.id,
+            ativo: chk.checked,
+            hora_inicio: ini.value,
+            hora_fim: fim.value
+        };
+    });
+
+    const duracao = parseInt(document.getElementById('input-duracao-consulta').value) || 50;
+    const intervalo = parseInt(document.getElementById('input-intervalo-consulta').value) || 0;
+
+    try {
+        const { error: erroExpediente } = await supabase
+            .from('configuracao_expediente')
+            .upsert(linhas, { onConflict: 'dia_semana' });
+        if (erroExpediente) throw erroExpediente;
+
+        const { error: erroGeral } = await supabase
+            .from('configuracao_geral')
+            .upsert([{ user_id: currentUser.id, duracao_consulta_min: duracao, intervalo_min: intervalo }], { onConflict: 'user_id' });
+        if (erroGeral) throw erroGeral;
+
+        statusEl.textContent = '✅ Salvo!';
+        setTimeout(() => { statusEl.textContent = ''; }, 2500);
+    } catch (err) {
+        console.error('Erro ao salvar configuração de expediente:', err);
+        statusEl.textContent = '⚠️ Erro ao salvar. Tente novamente.';
+    }
+}
+
+// ==========================================
+// 📥 SOLICITAÇÕES PÚBLICAS (vindas da página de agendamento)
+// ==========================================
+function escHtml(str) {
+    if (!str) return '';
+    return String(str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+window.atualizarBadgeSolicitacoes = function() {
+    const badge = document.getElementById('badge-solicitacoes');
+    if (!badge) return;
+    const count = listaAgendaGlobal.filter(a => a.status === 'pendente' && a.origem === 'publico').length;
+    if (count > 0) {
+        badge.textContent = count;
+        badge.style.display = 'inline-flex';
+    } else {
+        badge.style.display = 'none';
+    }
+}
+
+window.renderizarSolicitacoes = function() {
+    const container = document.getElementById('lista-solicitacoes-container');
+    if (!container) return;
+
+    const pendentes = listaAgendaGlobal
+        .filter(a => a.status === 'pendente' && a.origem === 'publico')
+        .sort((a, b) => (a.data + (a.horario || '')).localeCompare(b.data + (b.horario || '')));
+
+    if (!pendentes.length) {
+        container.innerHTML = '<p style="color: var(--texto-secundario); text-align:center; padding: 30px 0;">Nenhuma solicitação pendente. 🎉</p>';
+        return;
+    }
+
+    container.innerHTML = pendentes.map(item => {
+        const [ano, mes, dia] = item.data.split('-').map(Number);
+        const dataBonita = formatarDataBonita(new Date(ano, mes - 1, dia));
+        return `
+            <div class="card-item-paciente" style="border-left-color: var(--roxo-vibrante);">
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px; flex-wrap:wrap;">
+                    <div>
+                        <div style="font-weight:700; color:var(--roxo-vibrante); font-size:0.85em; text-transform:capitalize;">${dataBonita} · ${item.horario}</div>
+                        <div style="font-size:1.05em; margin-top:4px;">👤 ${escHtml(item.paciente_nome) || 'Sem nome'}</div>
+                        <div style="font-size:0.85em; color:var(--texto-secundario); margin-top:2px;">📱 ${escHtml(item.paciente_telefone) || '—'}${item.paciente_email ? ' · ' + escHtml(item.paciente_email) : ''}</div>
+                        ${item.observacoes ? `<div style="font-size:0.85em; color:var(--texto-secundario); margin-top:6px; font-style:italic;">"${escHtml(item.observacoes)}"</div>` : ''}
+                    </div>
+                    <span class="badge-status-pendente">Pendente</span>
+                </div>
+                <div style="display:flex; gap:10px; margin-top:14px;">
+                    <button class="btn-primario" style="padding:8px 18px; font-size:0.85em;" onclick="aprovarSolicitacao('${item.id}')">✓ Aprovar</button>
+                    <button class="btn-secundario" style="padding:7px 16px; font-size:0.85em;" onclick="recusarSolicitacao('${item.id}')">Recusar</button>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+window.aprovarSolicitacao = async function(id) {
+    const item = listaAgendaGlobal.find(a => a.id === id);
+    if (!item) return;
+
+    const duracao = item.duracao || 50;
+    const conflito = window.verificarConflitoAgenda(item.data, item.horario, duracao, item.id);
+    if (conflito.temConflito && !confirm(conflito.mensagem + '\n\nDeseja aprovar mesmo assim?')) return;
+
+    const [ano, mes, dia] = item.data.split('-').map(Number);
+    const dataBonita = formatarDataBonita(new Date(ano, mes - 1, dia));
+    if (!confirm(`Aprovar o horário de ${item.paciente_nome} em ${dataBonita} às ${item.horario}?`)) return;
+
+    item.tipo = 'paciente';
+    item.descricao = item.paciente_nome;
+    item.whatsapp = item.paciente_telefone;
+    item.duracao = duracao;
+
+    // Só cria o evento no Google Agenda se ela estiver conectada agora
+    if (googleAccessToken) {
+        await sincronizarEventoUnico(item);
+    }
+
+    try {
+        const { error } = await supabase.from('agenda').update({
+            tipo: item.tipo, descricao: item.descricao, whatsapp: item.whatsapp,
+            duracao: item.duracao, status: 'confirmado',
+            google_event_id: item.google_event_id || null
+        }).eq('id', id);
+        if (error) throw error;
+    } catch (err) {
+        console.error('Erro ao aprovar solicitação:', err);
+        alert('⚠️ Não foi possível salvar a aprovação. Tente novamente.');
+        return;
+    }
+
+    item.status = 'confirmado';
+
+    if (!googleAccessToken) {
+        alert('✅ Aprovado! Mas a Google Agenda não está conectada agora, então o evento não foi criado lá — conecte e sincronize quando puder.');
+    }
+
+    window.renderizarSolicitacoes();
+    window.atualizarBadgeSolicitacoes();
+    window.atualizarCalendarioNaTela();
+}
+
+window.recusarSolicitacao = async function(id) {
+    const item = listaAgendaGlobal.find(a => a.id === id);
+    if (!item) return;
+    if (!confirm(`Recusar o pedido de ${item.paciente_nome}?`)) return;
+
+    try {
+        const { error } = await supabase.from('agenda').update({ status: 'recusado' }).eq('id', id);
+        if (error) throw error;
+    } catch (err) {
+        console.error('Erro ao recusar solicitação:', err);
+        alert('⚠️ Não foi possível recusar agora. Tente novamente.');
+        return;
+    }
+
+    item.status = 'recusado';
+    window.renderizarSolicitacoes();
+    window.atualizarBadgeSolicitacoes();
+}
+
+// ==========================================
 // CONTROLE DE TELAS E SEGURANÇA
 // ==========================================
 window.toggleMenuMobile = function() { document.querySelector('.sidebar').classList.toggle('aberta'); }
@@ -772,6 +985,8 @@ window.mudarTela = function(idTela, elementoMenu) {
     if (idTela === 'tela-agenda' && calendarInstance) setTimeout(() => { calendarInstance.updateSize(); calendarInstance.render(); }, 100);
     if (idTela === 'tela-agenda-dia') window.renderizarAgendaDoDia();
     if (idTela === 'tela-agendamentos-lista') window.renderizarListaAgendamentos();
+    if (idTela === 'tela-solicitacoes') window.renderizarSolicitacoes();
+    if (idTela === 'tela-configuracoes') window.carregarConfiguracaoExpediente();
     window.fecharMenuMobile();
 }
 

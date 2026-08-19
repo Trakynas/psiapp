@@ -250,6 +250,13 @@ input:focus, select:focus, textarea:focus { border-color: var(--roxo-vibrante) !
 .tabela-transacoes th { background: rgba(240,237,245,0.8); font-weight: 600; }
 .badge-status-pago { background: var(--verde-sucesso); color: var(--verde-texto); padding: 5px 12px; border-radius: 20px; font-weight: 600; font-size: 0.8em; }
 .badge-status-pendente { background: var(--status-alerta); color: var(--texto-alerta); padding: 5px 12px; border-radius: 20px; font-weight: 600; font-size: 0.8em; }
+.badge-contador {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 20px; height: 20px; padding: 0 6px;
+    background: var(--texto-alerta); color: white;
+    border-radius: 20px; font-size: 0.72em; font-weight: 700;
+    margin-left: 6px; vertical-align: middle;
+}
 
 .btn-icone {
     background: rgba(255,255,255,0.9);
@@ -311,6 +318,13 @@ input:focus, select:focus, textarea:focus { border-color: var(--roxo-vibrante) !
         max-height: 55vh;
         overflow-y: auto;
         -webkit-overflow-scrolling: touch;
+    }
+
+    /* Mesma lógica: a tela de Configurações também usa .calendario-wrapper
+       só pelo visual de "card", mas o conteúdo (dias + duração) não pode
+       ficar cortado em 520px sem rolagem. */
+    #tela-configuracoes .calendario-wrapper {
+        max-height: none;
     }
 }
 

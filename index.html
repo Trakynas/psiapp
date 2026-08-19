@@ -61,9 +61,11 @@
         <div class="menu-item ativo" onclick="mudarTela('tela-agenda-dia', this)">📋 Agenda</div>
         <div class="menu-item" onclick="mudarTela('tela-agendamentos-lista', this)">🧾 Agendamentos</div>
         <div class="menu-item" onclick="mudarTela('tela-agenda', this)">🗓️ Calendário</div>
+        <div class="menu-item" onclick="tentarAcessarTela('tela-solicitacoes', this)">📥 Solicitações 🔒 <span id="badge-solicitacoes" class="badge-contador" style="display:none;"></span></div>
         <div class="menu-item" onclick="tentarAcessarTela('tela-pacientes', this)">👥 Pacientes 🔒</div>
         <div class="menu-item" onclick="tentarAcessarTela('tela-financeiro', this)">💰 Financeiro 🔒</div>
         <div class="menu-item" onclick="mudarTela('tela-fuso-horario', this)">🌍 Fuso Horário</div>
+        <div class="menu-item" onclick="mudarTela('tela-configuracoes', this)">⚙️ Configurações</div>
         <div class="menu-item" onclick="fazerLogout()" style="margin-top: auto;">🚪 Sair</div>
     </div>
 
@@ -195,6 +197,17 @@
             </div>
         </div>
 
+        <!-- TELA: SOLICITAÇÕES (vindas da página pública de agendamento) -->
+        <div id="tela-solicitacoes" class="tela">
+            <div class="header">
+                <div>
+                    <h1>Solicitações 📥</h1>
+                    <p>Pedidos de agendamento feitos pela página pública, aguardando aprovação</p>
+                </div>
+            </div>
+            <div id="lista-solicitacoes-container"></div>
+        </div>
+
         <!-- TELA: PACIENTES -->
         <div id="tela-pacientes" class="tela">
             <div class="header">
@@ -244,9 +257,42 @@
         </div>
         
         <div id="tela-configuracoes" class="tela">
-            <div class="header"><h1>Configurações ⚙️</h1></div>
-            <p style="color: var(--texto-secundario);">Sistema integrado com Supabase (nuvem) e Google Agenda.</p>
+            <div class="header">
+                <div>
+                    <h1>Configurações ⚙️</h1>
+                    <p>Defina os dias e horários que aparecem na página pública de agendamento</p>
+                </div>
+            </div>
+
+            <div class="calendario-wrapper" style="padding: 24px; max-width: 640px;">
+                <h3 style="color: var(--texto-berinjela); margin-top:0;">Dias de atendimento</h3>
+                <div id="lista-dias-expediente" style="display:flex; flex-direction:column; gap:10px; margin-bottom:26px;">
+                    <p style="color: var(--texto-secundario);">Carregando...</p>
+                </div>
+
+                <h3 style="color: var(--texto-berinjela);">Duração das consultas</h3>
+                <p style="color: var(--texto-secundario); font-size:0.85em; margin-top:-8px;">Isso também define o espaçamento entre os horários oferecidos na página pública.</p>
+                <div style="display:flex; gap:16px; flex-wrap:wrap; margin-bottom:26px;">
+                    <label style="flex:1; min-width:180px;">
+                        <span style="display:block; font-size:0.85em; color:var(--texto-secundario); margin-bottom:6px;">Duração (minutos)</span>
+                        <input type="number" id="input-duracao-consulta" min="10" step="5" style="width:100%;">
+                    </label>
+                    <label style="flex:1; min-width:180px;">
+                        <span style="display:block; font-size:0.85em; color:var(--texto-secundario); margin-bottom:6px;">Intervalo entre consultas (minutos)</span>
+                        <input type="number" id="input-intervalo-consulta" min="0" step="5" style="width:100%;">
+                    </label>
+                </div>
+
+                <button class="btn-primario" onclick="salvarConfiguracaoExpediente()">💾 Salvar configuração</button>
+                <span id="status-salvar-config" style="margin-left:12px; font-size:0.85em; color: var(--texto-secundario);"></span>
+
+                <p style="color: var(--texto-secundario); font-size:0.82em; margin-top:22px; border-top: 1px solid rgba(0,0,0,0.06); padding-top:16px;">
+                    💡 Pra bloquear um horário específico dentro de um dia ativo (ex: uma folga, ida ao médico), não precisa mexer aqui —
+                    é só criar um agendamento pessoal normal na sua agenda, nesse horário. Ele bloqueia automaticamente na página pública.
+                </p>
+            </div>
         </div>
+
     </div>
 
     <!-- MODAL DE SENHA -->
