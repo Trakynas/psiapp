@@ -1108,9 +1108,13 @@ window.abrirModalNovoAgendamento = function(calendarEvent = null) {
     document.getElementById('check-recorrencia').checked = false;
     window.mudarOpcaoRecorrencia();
     document.getElementById('modal-agendamento').style.display = 'flex';
+    document.body.style.overflow = 'hidden';
 }
 
-window.fecharModalAgendamento = function() { document.getElementById('modal-agendamento').style.display = 'none'; }
+window.fecharModalAgendamento = function() {
+    document.getElementById('modal-agendamento').style.display = 'none';
+    document.body.style.overflow = '';
+}
 window.deletarAgendamentoDoModal = async function() {
     const id = document.getElementById('agenda-id').value;
     if (id && confirm("Tem certeza que deseja excluir este agendamento?")) {

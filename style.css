@@ -212,8 +212,15 @@ input, select, textarea {
     width: 100%;
     box-sizing: border-box;
     outline: none;
+    min-width: 0;
 }
 input:focus, select:focus, textarea:focus { border-color: var(--roxo-vibrante) !important; box-shadow: 0 0 0 4px rgba(124, 58, 237, 0.12) !important; }
+
+/* Evita que campos lado a lado (ex: Data Inicial / Horário) estourem a
+   largura da tela no celular — sem isso, o input nativo de horário força
+   uma largura mínima maior que o espaço disponível no flex. */
+.form-row { min-width: 0; }
+.form-row > .form-group { min-width: 0; }
 
 .bloco-pacote-config {
     background: rgba(124, 58, 237, 0.04);
@@ -279,6 +286,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--roxo-vibrante) !
     position: fixed;
     top: 0; left: 0;
     width: 100vw; height: 100vh;
+    height: 100dvh;
     background: rgba(42, 18, 56, 0.45);
     backdrop-filter: blur(8px);
     display: none;
@@ -288,13 +296,39 @@ input:focus, select:focus, textarea:focus { border-color: var(--roxo-vibrante) !
     padding: 20px;
     box-sizing: border-box;
 }
-.modal-container { width: 100%; max-width: 550px; padding: 30px; box-sizing: border-box; border-radius: 22px; }
+.modal-container {
+    width: 100%;
+    max-width: 550px;
+    padding: 30px;
+    box-sizing: border-box;
+    border-radius: 22px;
+    /* Limita a altura à tela disponível e rola por dentro do modal em vez de
+       estourar pra fora — é isso que resolve o "sumiço" do rodapé no celular
+       quando o conteúdo (pacote + recorrência) cresce. */
+    max-height: calc(100dvh - 40px);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    display: flex;
+    flex-direction: column;
+}
 .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
 .modal-header h2 { margin: 0; font-size: 1.4em; font-weight: 600; }
 .btn-fechar { background: none; border: none; font-size: 1.4em; cursor: pointer; color: var(--texto-secundario); }
 .form-group { margin-bottom: 15px; }
 .form-group label { display: block; margin-bottom: 6px; font-weight: 600; font-size: 0.85em; }
-.modal-footer { display: flex; justify-content: flex-end; gap: 10px; margin-top: 25px; }
+.modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 25px;
+    /* Fica grudado embaixo do modal enquanto o conteúdo rola por trás dele,
+       então Salvar/Cancelar nunca somem da tela. */
+    position: sticky;
+    bottom: -30px;
+    margin-bottom: -30px;
+    padding: 14px 0 30px;
+    background: var(--card-bg);
+}
 
 .tipo-toggle { display: flex; background: rgba(255,255,255,0.6); padding: 4px; border-radius: 12px; margin-bottom: 18px; gap: 4px; border: 1px solid rgba(124,58,237,0.15); }
 .btn-toggle-tipo { flex: 1; padding: 9px; border: none; background: none; border-radius: 9px; cursor: pointer; font-weight: 600; color: var(--texto-secundario); font-size: 0.9em; }
